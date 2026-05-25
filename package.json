@@ -44,8 +44,15 @@
   },
   "dependencies": {
     "boltz-core": "^5.0.0",
-    "permissionless": "^0.3.5",
     "viem": "^2.51.0"
+  },
+  "peerDependencies": {
+    "permissionless": "^0.3.5"
+  },
+  "peerDependenciesMeta": {
+    "permissionless": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "typescript": "^5.8.2"
