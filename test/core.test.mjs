@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { MemoryOperationStore, calculateEscrowFee, normalizeBytes32 } from '../dist/index.js'
+import {
+  MemoryOperationStore,
+  calculateEscrowFee,
+  multiEscrowAbi,
+  multiEscrowRuntimeBytecodeHash,
+  normalizeBytes32,
+} from '../dist/index.js'
 
 test('normalizes bytes32 trade ids', () => {
   assert.equal(normalizeBytes32('A'.repeat(64)), `0x${'a'.repeat(64)}`)
@@ -32,4 +38,13 @@ test('stores operation records in memory', async () => {
   })
   assert.equal((await store.list({ kind: 'swap_in' })).length, 1)
   assert.equal((await store.get('op-1')).status, 'awaiting_onchain')
+})
+
+test('re-exports the shared MultiEscrow contract artifact', () => {
+  const tradeCreated = multiEscrowAbi.find(entry => entry.type === 'event' && entry.name === 'TradeCreated')
+  assert.ok(tradeCreated)
+  assert.equal(tradeCreated.inputs[2].name, 'seller')
+  assert.equal(tradeCreated.inputs[3].name, 'buyer')
+  assert.equal(tradeCreated.inputs[4].name, 'arbiter')
+  assert.match(multiEscrowRuntimeBytecodeHash, /^0x[0-9a-f]{64}$/)
 })

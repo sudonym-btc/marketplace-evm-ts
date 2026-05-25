@@ -43,6 +43,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@sudonym-btc/marketplace-contracts": "github:sudonym-btc/marketplace-contracts#1ea78c9deddb0e88e261912b8c92e1a8ff867855",
     "boltz-core": "^5.0.0",
     "viem": "^2.51.0"
   },
