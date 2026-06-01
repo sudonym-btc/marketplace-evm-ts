@@ -2,7 +2,8 @@
 
 `@sudonym-btc/marketplace-evm` is a Nostr-agnostic EVM payment engine for
 marketplaces. It owns EVM escrow validation, escrow lifecycle calls,
-Boltz-backed swap orchestration, account abstraction, and operation recovery.
+Boltz-backed swap orchestration, operation recovery, and the account
+abstraction integration point.
 
 It deliberately does **not** depend on `nostr-tools`, NDK, or any Nostr event
 types. Nostr marketplace adapters should translate listing/order proofs into
@@ -12,9 +13,11 @@ the plain request types exported by this package.
 
 - Validate EVM escrow funding proofs from transaction receipts and contract logs.
 - Build escrow fund, release, claim, arbitrate, and withdraw calls.
-- Execute calls through EOA or ERC-4337 account abstraction executors.
+- Execute calls through ERC-4337 account abstraction only.
 - Coordinate Boltz swap-in and swap-out lifecycles.
 - Persist and resume swap/escrow operations through caller-provided storage.
+- Derive per-trade AA owner accounts from a caller-provided marketplace seed.
+- Report deterministic usage watermarks for marketplace parent index recovery.
 
 ## Non-Responsibilities
 
@@ -37,7 +40,8 @@ import { createMarketplaceEvmClient } from '@sudonym-btc/marketplace-evm'
 const evm = createMarketplaceEvmClient({
   chains,
   operationStore,
-  executor,
+  seed: marketplaceSeed,
+  tradeIndex,
   boltz,
 })
 
@@ -48,7 +52,7 @@ const validation = await evm.escrow.validate({
   contractAddress,
   sellerAddress,
   arbiterAddress,
-  tokenAddress,
+  assetAddress,
   paymentAmount,
 })
 
@@ -57,20 +61,45 @@ const calls = evm.escrow.createTrade({
   buyerAddress,
   sellerAddress,
   arbiterAddress,
-  tokenAddress,
+  assetAddress,
   paymentAmount,
   contractAddress,
   unlockAt,
 })
 ```
 
+Seeded clients can also be created without an active `tradeIndex` when the
+caller only wants discovery:
+
+```ts
+const evm = createMarketplaceEvmClient({
+  chains,
+  operationStore,
+  seed: marketplaceSeed,
+})
+
+const discovery = await evm.discoverHighWatermark({
+  highWaterMark: currentMarketplaceMax,
+  unusedWindow: 50,
+})
+```
+
+Discovery checks deterministic AA activity for each derived trade index: smart
+account deployment, EntryPoint nonce, and optional protocol probes supplied by
+the adapter. It does not sweep arbitrary ERC20 or native balances.
+
 ## Current Status
 
-This package is an initial implementation scaffold. Validation and call
-builders are shaped for the MultiEscrow contract described by the marketplace
-escrow NIP. Swap and AA modules expose stable interfaces and operation records
-so real Boltz/Pimlico implementations can be filled in without changing the
-Nostr-facing adapter API.
+This package has working MultiEscrow validation/call builders and Boltz-backed
+Arbitrum swap orchestration covered by local-stack integration tests. Account
+abstraction is implemented with `permissionless` + `viem`: each chain can carry
+its own EntryPoint, SimpleAccount factory, bundler, and Pimlico-compatible
+paymaster config. Every configured chain must provide account-abstraction
+config. Callers can still pass a custom executor for tests or adapters, but a
+viem `LocalAccount` is enough for the package to build a sponsored ERC-4337
+executor per chain. For marketplace recovery, callers should prefer `seed` plus
+`tradeIndex` so the package can derive the same per-trade owner accounts on a
+new device.
 
 ## Integration Tests
 

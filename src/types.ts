@@ -1,14 +1,18 @@
-import type { Address, Hash, Hex, PublicClient } from 'viem'
+import type { Address, Hash, Hex, LocalAccount, PublicClient } from 'viem'
+import type { EntryPointVersion } from 'viem/account-abstraction'
+import type { EvmProtocolActivityProbe, EvmSmartAccountAddressResolver } from './discovery/types.js'
+import type { EvmSeedConfig } from './seed.js'
 
 export type EvmHex = Hex
 export type EvmAddress = Address
 export type EvmHash = Hash
 
-export type EvmToken = {
+export type EvmAsset = {
   chainId: number
   address: EvmAddress
   denomination: string
   decimals: number
+  boltzCurrency?: string
 }
 
 export type EvmAmount = {
@@ -20,19 +24,31 @@ export type EvmAmount = {
 export type EvmChainConfig = {
   id: string
   chainId: number
-  publicClient: PublicClient
+  name?: string
+  rpcUrl?: string
+  publicClient?: PublicClient
   blockExplorerUrl?: string
-  nativeToken: EvmToken
-  tokens?: EvmToken[]
-  accountAbstraction?: EvmAaConfig
+  nativeAsset: EvmAsset
+  assets?: EvmAsset[]
+  boltz?: EvmBoltzConfig
+  accountAbstraction: EvmAaConfig
+}
+
+export type ResolvedEvmChainConfig = EvmChainConfig & {
+  publicClient: PublicClient
 }
 
 export type EvmAaConfig = {
   entryPointAddress: EvmAddress
   factoryAddress: EvmAddress
+  entryPointVersion?: EntryPointVersion
   bundlerUrl: string
   paymasterUrl?: string
   paymasterAddress?: EvmAddress
+  paymasterContext?: unknown
+  sponsorshipPolicyId?: string
+  userOperationReceiptTimeoutMs?: number
+  userOperationReceiptPollingIntervalMs?: number
 }
 
 export type EvmCall = {
@@ -108,7 +124,12 @@ export type EvmOperationStore = {
 export type MarketplaceEvmClientOptions = {
   chains: EvmChainConfig[]
   operationStore: EvmOperationStore
-  executor: EvmExecutor
+  executor?: EvmExecutor
+  account?: LocalAccount
+  seed?: string | EvmSeedConfig
+  tradeIndex?: number
+  protocolActivityProbe?: EvmProtocolActivityProbe
+  smartAccountAddressResolver?: EvmSmartAccountAddressResolver
   boltz?: EvmBoltzConfig
   now?: () => number
 }

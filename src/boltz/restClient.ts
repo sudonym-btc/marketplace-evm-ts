@@ -1,3 +1,5 @@
+import createOpenApiClient from 'openapi-fetch'
+
 import type {
   BoltzClient,
   BoltzReverseSwapRequest,
@@ -6,44 +8,86 @@ import type {
   BoltzSubmarineSwapRequest,
   BoltzSubmarineSwapResponse,
 } from './types.js'
+import type { paths } from './openapi.generated.js'
 
 export type BoltzRestClientOptions = {
   apiUrl: string
   fetch?: typeof fetch
 }
 
-async function readJson<T>(response: Response): Promise<T> {
-  if (!response.ok) throw new Error(`Boltz API ${response.status}: ${await response.text()}`)
-  return (await response.json()) as T
+export class BoltzApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly payload: unknown,
+  ) {
+    const message = typeof payload === 'string' ? payload : JSON.stringify(payload)
+    super(`Boltz API ${status}: ${message}`)
+    this.name = 'BoltzApiError'
+  }
+}
+
+export function isBoltzMissingSwapError(error: unknown): boolean {
+  return (
+    error instanceof BoltzApiError &&
+    error.status === 404 &&
+    typeof error.payload === 'object' &&
+    error.payload !== null &&
+    typeof (error.payload as Record<string, unknown>).error === 'string' &&
+    (error.payload as Record<string, string>).error.includes('could not find swap')
+  )
+}
+
+function normalizeBaseUrl(apiUrl: string): string {
+  const trimmed = apiUrl.replace(/\/+$/, '')
+  return trimmed.endsWith('/v2') ? trimmed : `${trimmed}/v2`
+}
+
+function boltzApiError(status: number, error: unknown): Error {
+  return new BoltzApiError(status, error)
+}
+
+function readData<T>(result: { data?: T; error?: unknown; response: Response }): T {
+  if (result.error !== undefined || !result.response.ok) {
+    throw boltzApiError(result.response.status, result.error)
+  }
+  if (result.data === undefined) throw boltzApiError(result.response.status, 'missing response body')
+  return result.data
 }
 
 export function createBoltzRestClient(options: BoltzRestClientOptions): BoltzClient {
   const fetchImpl = options.fetch ?? globalThis.fetch
-  const apiUrl = options.apiUrl.replace(/\/$/, '')
+  const client = createOpenApiClient<paths>({
+    baseUrl: normalizeBaseUrl(options.apiUrl),
+    fetch: fetchImpl as (input: Request) => Promise<Response>,
+  })
 
   return {
     async createReverseSwap(request: BoltzReverseSwapRequest): Promise<BoltzReverseSwapResponse> {
-      return readJson(
-        await fetchImpl(`${apiUrl}/v2/swap/reverse`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(request),
+      return readData(
+        await client.POST('/swap/reverse', {
+          body: {
+            ...request,
+            claimCovenant: request.claimCovenant ?? false,
+            preimageHash: request.preimageHash.replace(/^0x/, ''),
+          },
         }),
-      )
+      ) as BoltzReverseSwapResponse
     },
 
     async createSubmarineSwap(request: BoltzSubmarineSwapRequest): Promise<BoltzSubmarineSwapResponse> {
-      return readJson(
-        await fetchImpl(`${apiUrl}/v2/swap/submarine`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(request),
+      return readData(
+        await client.POST('/swap/submarine', {
+          body: request,
         }),
-      )
+      ) as BoltzSubmarineSwapResponse
     },
 
     async getSwap(id: string): Promise<BoltzStatusUpdate> {
-      return readJson(await fetchImpl(`${apiUrl}/v2/swap/${encodeURIComponent(id)}`))
+      return readData(
+        await client.GET('/swap/{id}', {
+          params: { path: { id } },
+        }),
+      ) as BoltzStatusUpdate
     },
 
     async *subscribeSwap(id: string): AsyncIterable<BoltzStatusUpdate> {
@@ -51,16 +95,20 @@ export function createBoltzRestClient(options: BoltzRestClientOptions): BoltzCli
     },
 
     async getSubmarinePreimage(id: string) {
-      const response = await readJson<{ preimage: string }>(
-        await fetchImpl(`${apiUrl}/v2/swap/submarine/${encodeURIComponent(id)}/preimage`),
+      const response = readData(
+        await client.GET('/swap/submarine/{id}/preimage', {
+          params: { path: { id } },
+        }),
       )
       return response.preimage as `0x${string}`
     },
 
     async getCooperativeRefundSignature(id: string) {
-      const response = await readJson<{ signature?: string | null }>(
-        await fetchImpl(`${apiUrl}/v2/swap/submarine/${encodeURIComponent(id)}/refund`),
-      )
+      const response = readData(
+        await client.GET('/swap/submarine/{id}/refund', {
+          params: { path: { id } },
+        }),
+      ) as { signature?: string | null }
       return (response.signature ?? null) as `0x${string}` | null
     },
   }

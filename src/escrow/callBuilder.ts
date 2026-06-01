@@ -22,7 +22,7 @@ export function createEvmEscrowCallBuilder(): EvmEscrowCallBuilder {
     createTrade(params: EvmCreateTradeParams): NamedEvmCall[] {
       const bondAmount = params.bondAmount?.value ?? 0n
       const escrowFee = params.escrowFee?.value ?? 0n
-      const totalNativeValue = params.tokenAddress.toLowerCase() === zeroAddress ? params.paymentAmount.value + bondAmount : 0n
+      const totalNativeValue = params.assetAddress.toLowerCase() === zeroAddress ? params.paymentAmount.value + bondAmount : 0n
       const createTradeCall = named('MultiEscrow.createTrade', {
         to: params.contractAddress,
         data: encodeFunctionData({
@@ -33,7 +33,7 @@ export function createEvmEscrowCallBuilder(): EvmEscrowCallBuilder {
             params.buyerAddress,
             params.sellerAddress,
             params.arbiterAddress,
-            params.tokenAddress,
+            params.assetAddress,
             params.paymentAmount.value,
             bondAmount,
             params.unlockAt,
@@ -43,10 +43,10 @@ export function createEvmEscrowCallBuilder(): EvmEscrowCallBuilder {
         ...(totalNativeValue > 0n ? { value: totalNativeValue } : {}),
       })
 
-      if (params.tokenAddress.toLowerCase() === zeroAddress) return [createTradeCall]
+      if (params.assetAddress.toLowerCase() === zeroAddress) return [createTradeCall]
       return [
         named('ERC20.approve', {
-          to: params.tokenAddress,
+          to: params.assetAddress,
           data: encodeFunctionData({
             abi: erc20Abi,
             functionName: 'approve',
@@ -101,7 +101,7 @@ export function createEvmEscrowCallBuilder(): EvmEscrowCallBuilder {
         data: encodeFunctionData({
           abi: multiEscrowAbi,
           functionName: 'withdraw',
-          args: [params.tokenAddress, params.beneficiaryAddress, params.destinationAddress, params.signature],
+          args: [params.assetAddress, params.beneficiaryAddress, params.destinationAddress, params.signature],
         }),
       })
     },

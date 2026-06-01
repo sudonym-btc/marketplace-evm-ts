@@ -15,7 +15,7 @@ export type EvmEscrowPaymentValidationRequest = {
   contractBytecodeHash?: EvmHex
   sellerAddress: EvmAddress
   arbiterAddress: EvmAddress
-  tokenAddress: EvmAddress
+  assetAddress: EvmAddress
   paymentAmount: EvmAmount
   bondAmount?: EvmAmount
   escrowFee?: EvmAmount
@@ -30,7 +30,7 @@ export type EvmEscrowFundingLog = {
   buyerAddress: EvmAddress
   sellerAddress: EvmAddress
   arbiterAddress: EvmAddress
-  tokenAddress: EvmAddress
+  assetAddress: EvmAddress
   paymentAmount: bigint
   bondAmount: bigint
   unlockAt: bigint

@@ -1,4 +1,11 @@
 import type { EvmAddress, EvmHash, EvmHex } from '../types.js'
+import type { components } from './openapi.generated.js'
+
+type OpenApiReverseRequest = components['schemas']['ReverseRequest']
+type OpenApiReverseResponse = components['schemas']['ReverseResponse']
+type OpenApiSubmarineRequest = components['schemas']['SubmarineRequest']
+type OpenApiSubmarineResponse = components['schemas']['SubmarineResponse']
+type OpenApiSwapStatus = components['schemas']['SwapStatus']
 
 export type BoltzSwapStatus =
   | 'swap.created'
@@ -12,42 +19,49 @@ export type BoltzSwapStatus =
   | 'swap.expired'
   | 'swap.failed'
 
-export type BoltzStatusUpdate = {
-  id: string
+export type BoltzStatusUpdate = Omit<OpenApiSwapStatus, 'status' | 'transaction'> & {
+  id?: string
   status: BoltzSwapStatus | string
+  transaction?: {
+    id?: EvmHash
+    hex?: string
+  }
   transactionHash?: EvmHash
   error?: string
 }
 
-export type BoltzReverseSwapRequest = {
-  to: string
+export type BoltzReverseSwapRequest = Omit<
+  OpenApiReverseRequest,
+  'claimAddress' | 'claimCovenant' | 'preimageHash'
+> & {
   preimageHash: EvmHex
   claimAddress: EvmAddress
-  invoiceAmount?: number
-  onchainAmount?: number
-  description?: string
+  /** Boltz 3.12.1's OpenAPI marks this required even though the API defaults it to false. */
+  claimCovenant?: boolean
 }
 
-export type BoltzReverseSwapResponse = {
-  id: string
-  invoice: string
+export type BoltzReverseSwapResponse = Omit<
+  OpenApiReverseResponse,
+  'lockupAddress' | 'refundAddress' | 'timeoutBlockHeight'
+> & {
   lockupAddress?: EvmAddress
+  refundAddress?: EvmAddress
   timeoutBlockHeight: number
-  onchainAmount?: number
 }
 
-export type BoltzSubmarineSwapRequest = {
-  from: string
+export type BoltzSubmarineSwapRequest = Omit<OpenApiSubmarineRequest, 'invoice'> & {
   invoice: string
 }
 
-export type BoltzSubmarineSwapResponse = {
-  id: string
+export type BoltzSubmarineSwapResponse = Omit<
+  OpenApiSubmarineResponse,
+  'address' | 'expectedAmount' | 'timeoutBlockHeight'
+> & {
   address?: EvmAddress
+  /** EVM submarine swaps return this at runtime, but Boltz 3.12.1's OpenAPI schema omits it. */
   claimAddress?: EvmAddress
   expectedAmount?: number
   timeoutBlockHeight: number
-  bip21?: string
 }
 
 export type BoltzClient = {
@@ -60,5 +74,5 @@ export type BoltzClient = {
 }
 
 export type BoltzCurrencyResolver = {
-  currencyForToken(chainId: number, tokenAddress?: EvmAddress): string
+  currencyForAsset(chainId: number, assetAddress?: EvmAddress): string
 }

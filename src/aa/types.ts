@@ -1,4 +1,12 @@
-import type { EvmAaConfig, EvmAddress, EvmCall, EvmExecutionOptions, EvmExecutionResult, NamedEvmCall } from '../types.js'
+import type { LocalAccount } from 'viem'
+import type {
+  EvmAddress,
+  EvmCall,
+  EvmExecutionOptions,
+  EvmExecutionResult,
+  NamedEvmCall,
+  ResolvedEvmChainConfig,
+} from '../types.js'
 
 export type AaGasEstimate = {
   gasCostWei: bigint
@@ -6,9 +14,8 @@ export type AaGasEstimate = {
 }
 
 export type AaExecutorOptions = {
-  chainId: number
-  ownerAddress: EvmAddress
-  config: EvmAaConfig
+  chain: ResolvedEvmChainConfig
+  owner: LocalAccount
 }
 
 export type AaExecutor = {

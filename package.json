@@ -24,9 +24,21 @@
       "types": "./dist/boltz/index.d.ts",
       "import": "./dist/boltz/index.js"
     },
+    "./auction": {
+      "types": "./dist/auction/index.d.ts",
+      "import": "./dist/auction/index.js"
+    },
     "./escrow": {
       "types": "./dist/escrow/index.d.ts",
       "import": "./dist/escrow/index.js"
+    },
+    "./discovery": {
+      "types": "./dist/discovery/index.d.ts",
+      "import": "./dist/discovery/index.js"
+    },
+    "./seed": {
+      "types": "./dist/seed.d.ts",
+      "import": "./dist/seed.js"
     },
     "./swaps": {
       "types": "./dist/swaps/index.d.ts",
@@ -35,24 +47,21 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "generate:boltz-openapi": "node scripts/generate-boltz-openapi.mjs",
     "check": "tsc --noEmit",
     "test": "node --test test/*.test.mjs",
-    "test:integration": "node --test test/integration/*.test.mjs"
+    "test:integration": "node --test --test-concurrency=1 test/integration/*.test.mjs"
   },
   "dependencies": {
-    "@sudonym-btc/marketplace-evm-contracts": "github:sudonym-btc/marketplace-evm-contracts#01c2f7c0cd450b96b90dbd0e950de01133cdd15b",
+    "@sudonym-btc/marketplace-evm-contracts": "file:../marketplace-evm-contracts",
     "boltz-core": "^5.0.0",
-    "viem": "^2.51.0"
-  },
-  "peerDependencies": {
-    "permissionless": "^0.3.5"
-  },
-  "peerDependenciesMeta": {
-    "permissionless": {
-      "optional": true
-    }
+    "openapi-fetch": "^0.17.0",
+    "ox": "0.11.3",
+    "permissionless": "0.3.5",
+    "viem": "2.44.4"
   },
   "devDependencies": {
+    "openapi-typescript": "^7.13.0",
     "typescript": "^5.8.2"
   },
   "engines": {

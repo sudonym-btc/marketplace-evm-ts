@@ -1,25 +1,31 @@
 import type { BoltzClient, BoltzStatusUpdate } from '../boltz/types.js'
 import type { NamedEvmCall } from '../types.js'
 import type { EvmAddress, EvmAmount, EvmOperationRecord, EvmOperationStore } from '../types.js'
+import type { EvmAccountManager } from '../accounts.js'
+import type { EvmHex } from '../types.js'
+import type { EvmSeedConfig } from '../seed.js'
 
-export type SwapInRequest = {
-  id: string
+export type SwapAttemptRequest = {
+  tradeIndex: number
+  attemptIndex: number
+}
+
+export type SwapInRequest = SwapAttemptRequest & {
   chainId: number
-  accountAddress: EvmAddress
   boltzCurrency: string
-  tokenAddress?: EvmAddress
+  lightningCurrency?: string
+  assetAddress?: EvmAddress
   amount: EvmAmount
-  preimageHash: `0x${string}`
-  claimAddress: EvmAddress
+  boltzAmountSats?: number
   description?: string
   postClaimCalls?: NamedEvmCall[]
 }
 
-export type SwapOutRequest = {
-  id: string
+export type SwapOutRequest = SwapAttemptRequest & {
   chainId: number
   boltzCurrency: string
-  tokenAddress?: EvmAddress
+  lightningCurrency?: string
+  assetAddress?: EvmAddress
   amount?: EvmAmount
   invoice?: string
   invoiceDescription?: string
@@ -33,6 +39,12 @@ export type SwapInResult =
       invoice: string
       swapId: string
       amount?: EvmAmount
+      onchainAmount?: number
+      preimage?: EvmHex
+      preimageHash: EvmHex
+      lockupAddress?: EvmAddress
+      refundAddress?: EvmAddress
+      timeoutBlockHeight: number
     }
   | {
       type: 'completed'
@@ -51,6 +63,10 @@ export type SwapOutResult =
       type: 'awaiting_resolution'
       operation: EvmOperationRecord
       swapId: string
+      expectedAmount?: number
+      claimAddress?: EvmAddress
+      lockupAddress?: EvmAddress
+      timeoutBlockHeight: number
     }
   | {
       type: 'completed'
@@ -66,6 +82,8 @@ export type SwapResumeResult = {
 export type SwapServiceOptions = {
   boltz: BoltzClient
   store: EvmOperationStore
+  seed: string | EvmSeedConfig
+  accounts: EvmAccountManager
   now?: () => number
 }
 

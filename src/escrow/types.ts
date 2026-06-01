@@ -24,7 +24,7 @@ export type EvmCreateTradeParams = {
   buyerAddress: EvmAddress
   sellerAddress: EvmAddress
   arbiterAddress: EvmAddress
-  tokenAddress: EvmAddress
+  assetAddress: EvmAddress
   paymentAmount: EvmAmount
   bondAmount?: EvmAmount
   unlockAt: bigint
@@ -48,7 +48,7 @@ export type EvmArbitrateParams = EvmSignedEscrowAction & {
 }
 
 export type EvmWithdrawParams = {
-  tokenAddress: EvmAddress
+  assetAddress: EvmAddress
   beneficiaryAddress: EvmAddress
   destinationAddress: EvmAddress
   contractAddress: EvmAddress
