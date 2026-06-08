@@ -42,6 +42,7 @@
   },
   "dependencies": {
     "@sudonym-btc/marketplace-evm-contracts": "file:../marketplace-evm-contracts",
+    "@sudonym-btc/marketplace-driver-interface": "file:../marketplace-driver-interface-ts",
     "boltz-core": "^5.0.0",
     "openapi-fetch": "^0.17.0",
     "ox": "0.11.3",
