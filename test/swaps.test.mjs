@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { MemoryOperationStore, btcAmountToSats, createEvmSwapService, deriveEvmSwapMaterial } from '../dist/index.js'
+import { SwapAmountLimitError, createEvmSwapService } from '../dist/index.js'
+import { btcAmountToSats } from '../dist/swaps/amounts.js'
+import { deriveEvmSwapMaterial } from '../dist/seed.js'
+import { MemoryOperationStore } from '../dist/utils/store.js'
 
 const seed = '8'.repeat(64)
 
@@ -22,6 +25,32 @@ function boltzStub(overrides = {}) {
     reverseRequests: [],
     submarineRequests: [],
     statusRequests: [],
+
+    async getReversePairs() {
+      return {
+        BTC: {
+          tBTC: {
+            hash: 'reverse-pair-hash',
+            rate: 1,
+            limits: { minimal: 50_000, maximal: 4_294_967 },
+            fees: { percentage: 0.25, minerFees: { claim: 66, lockup: 232 } },
+          },
+        },
+      }
+    },
+
+    async getSubmarinePairs() {
+      return {
+        tBTC: {
+          BTC: {
+            hash: 'submarine-pair-hash',
+            rate: 1,
+            limits: { minimal: 50_000, maximal: 4_294_967, maximalZeroConf: 0 },
+            fees: { percentage: 0.1, minerFees: 33 },
+          },
+        },
+      }
+    },
 
     async createReverseSwap(request) {
       this.reverseRequests.push(request)
@@ -96,6 +125,17 @@ test('swap-in persists the Boltz reverse swap and can be resumed from storage', 
     preimageHash: material.preimageHash,
     claimAddress: '0x000000000000000000000000000000000000c102',
     onchainAmount: 50_000,
+    pairHash: 'reverse-pair-hash',
+  })
+  assert.deepEqual(result.limits, {
+    source: 'boltz',
+    direction: 'swap-in',
+    from: 'BTC',
+    to: 'tBTC',
+    amountSats: 50_000,
+    minimal: 50_000,
+    maximal: 4_294_967,
+    pairHash: 'reverse-pair-hash',
   })
   assert.equal(result.preimage, material.preimage)
   assert.equal(result.preimageHash, material.preimageHash)
@@ -226,6 +266,66 @@ test('swap-in converts BTC-denominated EVM base units to Boltz satoshis', async 
   assert.equal(boltz.reverseRequests[0].onchainAmount, 177_671)
 })
 
+test('swap-in rejects amounts below Boltz reverse swap limits before creating a swap', async () => {
+  const boltz = boltzStub()
+  const service = createEvmSwapService({
+    boltz,
+    store: new MemoryOperationStore(),
+    seed,
+    accounts,
+  })
+
+  await assert.rejects(
+    () =>
+      service.swapIn({
+        tradeIndex: 2,
+        attemptIndex: 0,
+        chainId: 42161,
+        boltzCurrency: 'tBTC',
+        lightningCurrency: 'BTC',
+        amount: { value: 20_283n, denomination: 'tBTC', decimals: 8 },
+      }),
+    error => {
+      assert.equal(error instanceof SwapAmountLimitError, true)
+      assert.equal(error.reason, 'below_minimum')
+      assert.equal(error.limits.minimal, 50_000)
+      assert.equal(error.limits.amountSats, 20_283)
+      return true
+    },
+  )
+  assert.equal(boltz.reverseRequests.length, 0)
+})
+
+test('swap-in rejects unsupported Boltz pairs before amount conversion', async () => {
+  const boltz = boltzStub()
+  const service = createEvmSwapService({
+    boltz,
+    store: new MemoryOperationStore(),
+    seed,
+    accounts,
+  })
+
+  await assert.rejects(
+    () =>
+      service.swapIn({
+        tradeIndex: 2,
+        attemptIndex: 0,
+        chainId: 42161,
+        boltzCurrency: 'USDT',
+        lightningCurrency: 'BTC',
+        amount: { value: 1_000_000n, denomination: 'USD', decimals: 6 },
+      }),
+    error => {
+      assert.equal(error instanceof SwapAmountLimitError, true)
+      assert.equal(error.reason, 'unsupported_pair')
+      assert.equal(error.limits.from, 'BTC')
+      assert.equal(error.limits.to, 'USDT')
+      return true
+    },
+  )
+  assert.equal(boltz.reverseRequests.length, 0)
+})
+
 test('converts BTC-like EVM amounts to sats with upward rounding', () => {
   assert.equal(btcAmountToSats({ value: 1_776_710_000_000_000n, denomination: 'BTC', decimals: 18 }), 177_671)
   assert.equal(btcAmountToSats({ value: 1_781_162_907_268_409n, denomination: 'BTC', decimals: 18 }), 178_117)
@@ -291,6 +391,7 @@ test('swap-out persists the Boltz submarine swap and resumes status by swap id',
     from: 'tBTC',
     to: 'BTC',
     invoice: 'lnbc1submarine',
+    pairHash: 'submarine-pair-hash',
   })
 
   const stored = await store.get(material.operationId)

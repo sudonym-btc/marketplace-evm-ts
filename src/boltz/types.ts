@@ -3,8 +3,10 @@ import type { components } from './openapi.generated.js'
 
 type OpenApiReverseRequest = components['schemas']['ReverseRequest']
 type OpenApiReverseResponse = components['schemas']['ReverseResponse']
+type OpenApiReversePair = components['schemas']['ReversePair']
 type OpenApiSubmarineRequest = components['schemas']['SubmarineRequest']
 type OpenApiSubmarineResponse = components['schemas']['SubmarineResponse']
+type OpenApiSubmarinePair = components['schemas']['SubmarinePair']
 type OpenApiSwapStatus = components['schemas']['SwapStatus']
 
 export type BoltzSwapStatus =
@@ -64,7 +66,15 @@ export type BoltzSubmarineSwapResponse = Omit<
   timeoutBlockHeight: number
 }
 
+export type BoltzPairTable<Pair> = Record<string, Record<string, Pair>>
+
+export type BoltzReversePair = OpenApiReversePair
+
+export type BoltzSubmarinePair = OpenApiSubmarinePair
+
 export type BoltzClient = {
+  getReversePairs(): Promise<BoltzPairTable<BoltzReversePair>>
+  getSubmarinePairs(): Promise<BoltzPairTable<BoltzSubmarinePair>>
   createReverseSwap(request: BoltzReverseSwapRequest): Promise<BoltzReverseSwapResponse>
   createSubmarineSwap(request: BoltzSubmarineSwapRequest): Promise<BoltzSubmarineSwapResponse>
   getSwap(id: string): Promise<BoltzStatusUpdate>

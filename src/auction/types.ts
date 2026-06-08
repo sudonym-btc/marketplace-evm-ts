@@ -9,28 +9,13 @@ export type EvmPlaceBidParams = {
   bidAmount: EvmAmount
   escrowFee?: EvmAmount
   endsAt: bigint
+  contextHash?: EvmHex
+  recycleCovenantHash?: EvmHex
   contractAddress: EvmAddress
-}
-
-export type EvmSignedAuctionAction = {
-  auctionId: string
-  contractAddress: EvmAddress
-  signature: EvmHex
-}
-
-export type EvmAuctionWithdrawParams = {
-  contractAddress: EvmAddress
-  assetAddress: EvmAddress
-  beneficiaryAddress: EvmAddress
-  destinationAddress: EvmAddress
-  signature: EvmHex
 }
 
 export type EvmAuctionCallBuilder = {
   placeBid(params: EvmPlaceBidParams): NamedEvmCall[]
-  settle(params: EvmSignedAuctionAction): NamedEvmCall
-  cancel(params: EvmSignedAuctionAction): NamedEvmCall
-  withdraw(params: EvmAuctionWithdrawParams): NamedEvmCall
 }
 
 export type EvmAuctionBidValidationRequest = {
@@ -45,6 +30,8 @@ export type EvmAuctionBidValidationRequest = {
   assetAddress: EvmAddress
   bidAmount: EvmAmount
   escrowFee?: EvmAmount
+  contextHash?: EvmHex
+  recycleCovenantHash?: EvmHex
   minConfirmations?: number
 }
 
@@ -56,6 +43,11 @@ export type EvmAuctionBidLog = {
   bidderAddress: EvmAddress
   assetAddress: EvmAddress
   bidAmount: bigint
+  fundedAmount?: bigint
+  escrowFee?: bigint
+  timeoutClaimantAddress?: EvmAddress
+  contextHash?: EvmHex
+  recycleCovenantHash?: EvmHex
   previousBidder: EvmAddress
   previousBid: bigint
   blockNumber?: bigint

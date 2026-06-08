@@ -52,7 +52,10 @@ function asFundingLog(
     paymentAmount: args.paymentAmount as bigint,
     bondAmount: args.bondAmount as bigint,
     unlockAt: args.unlockAt as bigint,
+    timeoutClaimantAddress: normalizeAddress(args.timeoutClaimant as string, 'TradeCreated timeout claimant'),
     escrowFee: args.escrowFee as bigint,
+    contextHash: normalizeBytes32(args.contextHash as string, 'TradeCreated context hash'),
+    recycleCovenantHash: normalizeBytes32(args.recycleCovenantHash as string, 'TradeCreated recycle covenant hash'),
     ...(log.blockNumber !== null ? { blockNumber: log.blockNumber } : {}),
     ...(log.logIndex !== null ? { logIndex: log.logIndex } : {}),
   }
@@ -111,6 +114,15 @@ export function createEvmEscrowValidator(
       const assetMatched = funding.assetAddress.toLowerCase() === request.assetAddress.toLowerCase()
       const recipientMatched = funding.sellerAddress.toLowerCase() === request.sellerAddress.toLowerCase()
       const escrowMatched = funding.arbiterAddress.toLowerCase() === request.arbiterAddress.toLowerCase()
+      const timeoutClaimantMatched = request.timeoutClaimantAddress
+        ? funding.timeoutClaimantAddress.toLowerCase() === request.timeoutClaimantAddress.toLowerCase()
+        : true
+      const contextMatched = request.contextHash
+        ? funding.contextHash.toLowerCase() === request.contextHash.toLowerCase()
+        : true
+      const recycleCovenantMatched = request.recycleCovenantHash
+        ? funding.recycleCovenantHash.toLowerCase() === request.recycleCovenantHash.toLowerCase()
+        : true
       const amountMatched =
         funding.paymentAmount >= request.paymentAmount.value &&
         funding.bondAmount >= (request.bondAmount?.value ?? 0n) &&
@@ -119,6 +131,9 @@ export function createEvmEscrowValidator(
       if (!assetMatched) return mismatch(request, 'Escrow asset mismatch', funding)
       if (!recipientMatched) return mismatch(request, 'Escrow seller address mismatch', funding)
       if (!escrowMatched) return mismatch(request, 'Escrow arbiter address mismatch', funding)
+      if (!timeoutClaimantMatched) return mismatch(request, 'Escrow timeout claimant mismatch', funding)
+      if (!contextMatched) return mismatch(request, 'Escrow context hash mismatch', funding)
+      if (!recycleCovenantMatched) return mismatch(request, 'Escrow recycle covenant hash mismatch', funding)
       if (!amountMatched) return mismatch(request, 'Escrow amount mismatch', funding)
 
       let confirmations: number | undefined

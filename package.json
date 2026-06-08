@@ -16,14 +16,6 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./aa": {
-      "types": "./dist/aa/index.d.ts",
-      "import": "./dist/aa/index.js"
-    },
-    "./boltz": {
-      "types": "./dist/boltz/index.d.ts",
-      "import": "./dist/boltz/index.js"
-    },
     "./auction": {
       "types": "./dist/auction/index.d.ts",
       "import": "./dist/auction/index.js"
@@ -32,13 +24,9 @@
       "types": "./dist/escrow/index.d.ts",
       "import": "./dist/escrow/index.js"
     },
-    "./discovery": {
-      "types": "./dist/discovery/index.d.ts",
-      "import": "./dist/discovery/index.js"
-    },
-    "./seed": {
-      "types": "./dist/seed.d.ts",
-      "import": "./dist/seed.js"
+    "./swap": {
+      "types": "./dist/swaps/index.d.ts",
+      "import": "./dist/swaps/index.js"
     },
     "./swaps": {
       "types": "./dist/swaps/index.d.ts",

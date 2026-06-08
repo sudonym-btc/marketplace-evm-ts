@@ -28,7 +28,10 @@ export type EvmCreateTradeParams = {
   paymentAmount: EvmAmount
   bondAmount?: EvmAmount
   unlockAt: bigint
+  timeoutClaimantAddress?: EvmAddress
   escrowFee?: EvmAmount
+  contextHash?: EvmHex
+  recycleCovenantHash?: EvmHex
   contractAddress: EvmAddress
 }
 
@@ -55,8 +58,29 @@ export type EvmWithdrawParams = {
   signature: EvmHex
 }
 
+export type EvmRecycleParams = {
+  sourceTradeId: string
+  targetTradeId: string
+  buyerAddress: EvmAddress
+  sellerAddress: EvmAddress
+  arbiterAddress: EvmAddress
+  assetAddress: EvmAddress
+  paymentAmount: EvmAmount
+  bondAmount?: EvmAmount
+  unlockAt: bigint
+  timeoutClaimantAddress: EvmAddress
+  escrowFee?: EvmAmount
+  contextHash?: EvmHex
+  recycleCovenantHash?: EvmHex
+  deadline?: bigint
+  buyerSignature?: EvmHex
+  arbiterSignature: EvmHex
+  contractAddress: EvmAddress
+}
+
 export type EvmEscrowCallBuilder = {
   createTrade(params: EvmCreateTradeParams): NamedEvmCall[]
+  recycle(params: EvmRecycleParams): NamedEvmCall
   claim(params: EvmSignedEscrowAction): NamedEvmCall
   release(params: EvmReleaseParams): NamedEvmCall
   arbitrate(params: EvmArbitrateParams): NamedEvmCall

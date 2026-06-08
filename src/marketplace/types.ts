@@ -20,7 +20,7 @@ export type EvmEscrowPaymentPolicy = {
 export type EvmAuctionPaymentPolicy = {
   method: 'evm'
   id: string
-  type: 'evm:multi-auction'
+  type: 'evm:multi-escrow-auction-v1'
   hash: EvmHex
   chainId: number
   contractAddress: EvmAddress
@@ -42,8 +42,6 @@ export type EvmPaymentAsset = {
 export type EvmMarketplaceChainConfig = EvmChainConfig & {
   multiEscrowAddress: EvmAddress
   multiEscrowBytecodeHash?: EvmHex
-  multiAuctionAddress?: EvmAddress
-  multiAuctionBytecodeHash?: EvmHex
 }
 
 export type ResolvedEvmMarketplaceChainConfig = ResolvedEvmChainConfig & EvmMarketplaceChainConfig
@@ -204,6 +202,29 @@ export type GenericPaymentRecoveryState =
   | { type: 'progress'; status: string; data?: Record<string, unknown> }
   | { type: 'recovered'; data?: Record<string, unknown> }
 
+export type GenericAuctionSettlementIntent = {
+  subject: 'bid'
+  action: 'auction_refund' | 'auction_promote'
+  group?: unknown
+  payment?: unknown
+  proof: GenericPaymentProof
+  expected?: GenericPaymentValidationRequest['expected']
+  validation?: unknown
+  refundPercent?: number
+  targetTradeId?: string
+  targetOrderGroupId?: string
+  targetUnlockAt?: number
+  recycleArgs?: unknown
+  data?: Record<string, unknown>
+}
+
+export type GenericAuctionSettlementResult = {
+  proof: GenericPaymentProof
+  inputs?: Array<Record<string, unknown>>
+  outputs?: Array<Record<string, unknown>>
+  data?: Record<string, unknown>
+}
+
 export type EvmEscrowPolicy = {
   method: 'evm'
   id: 'evm:multi-escrow'
@@ -246,7 +267,7 @@ export type EvmEscrowPolicy = {
 
 export type EvmAuctionPolicy = {
   method: 'evm'
-  id: 'evm:multi-auction'
+  id: 'evm:multi-escrow-auction-v1'
   subject: 'bid'
   family: 'auction'
   policies(): EvmAuctionPaymentPolicy[]
@@ -257,7 +278,7 @@ export type EvmAuctionPolicy = {
     unusedWindow: number
     now?: number
   }): Promise<{
-    policy: 'evm:multi-auction'
+    policy: 'evm:multi-escrow-auction-v1'
     maxUsedIndex: number
     nextUnusedIndex: number
     scannedFrom: number
@@ -274,12 +295,21 @@ export type EvmAuctionPolicy = {
     discovery: unknown
     now?: number
   }): Promise<{
-    policy: 'evm:multi-auction'
+    policy: 'evm:multi-escrow-auction-v1'
     data: Record<string, unknown>
   }>
   recover(payment: GenericPaymentRecoveryItem): AsyncIterable<GenericPaymentRecoveryState>
   pay(intent: GenericPaymentIntent): AsyncIterable<GenericPolicyPaymentState>
   validatePayment(request: GenericPaymentValidationRequest): Promise<GenericPaymentValidationResult>
+  refundPayment(intent: GenericAuctionSettlementIntent & {
+    action: 'auction_refund'
+    refundPercent: number
+  }): Promise<GenericAuctionSettlementResult>
+  recyclePayment(intent: GenericAuctionSettlementIntent & {
+    action: 'auction_promote'
+    targetTradeId: string
+    targetOrderGroupId: string
+  }): Promise<GenericAuctionSettlementResult>
   state(): EvmMarketplacePolicyState
 }
 
@@ -294,6 +324,7 @@ export type EvmPayRequest = {
 export type EvmResolvedPaymentIntent = {
   tradeId: string
   settlementId: string
+  subject: 'order' | 'bid'
   accountIndex: number
   seed: string
   chain: ResolvedEvmMarketplaceChainConfig
@@ -309,5 +340,6 @@ export type EvmResolvedPaymentIntent = {
   amount: EvmAmount
   fee: EvmAmount
   unlockAt: bigint
+  metadata?: Record<string, unknown>
   description: string
 }

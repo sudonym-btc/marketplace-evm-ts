@@ -2,21 +2,17 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
-  MemoryOperationStore,
-  calculateEscrowFee,
+  createEvmAuctionPolicy,
   createEvmEscrowPolicy,
   createMarketplaceEvmClient,
-  deriveEvmOwnerAccount,
-  deriveEvmSwapMaterial,
-  erc20Abi,
-  findErc20SwapLockup,
-  multiAuctionAbi,
-  multiAuctionRuntimeBytecodeHash,
-  multiEscrowAbi,
-  multiEscrowRuntimeBytecodeHash,
-  normalizeBytes32,
 } from '../dist/index.js'
-import { createPublicClient, http } from 'viem'
+import { multiEscrowAbi, multiEscrowRuntimeBytecodeHash } from '@sudonym-btc/marketplace-evm-contracts'
+import { erc20Abi } from '../dist/contracts/erc20.js'
+import { calculateEscrowFee } from '../dist/escrow/fees.js'
+import { findErc20SwapLockup } from '../dist/swaps/erc20Swap.js'
+import { deriveEvmOwnerAccount, deriveEvmSwapMaterial } from '../dist/seed.js'
+import { MemoryOperationStore } from '../dist/utils/store.js'
+import { createPublicClient, decodeFunctionData, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 
 function aaConfig() {
@@ -84,10 +80,6 @@ async function canRpc(url) {
     return false
   }
 }
-
-test('normalizes bytes32 trade ids', () => {
-  assert.equal(normalizeBytes32('A'.repeat(64)), `0x${'a'.repeat(64)}`)
-})
 
 test('calculates clamped escrow fees', () => {
   assert.equal(
@@ -158,7 +150,7 @@ test('EVM escrow startup marks stale Boltz operations failed without aborting', 
           denomination: 'ETH',
           decimals: 18,
         },
-        boltz: { apiUrl: 'https://boltz.hostr.development' },
+        boltz: { apiUrl: 'https://boltz.marketplace.development' },
         accountAbstraction: aaConfig(),
       },
     ],
@@ -182,7 +174,74 @@ test('EVM escrow startup marks stale Boltz operations failed without aborting', 
   assert.equal(updated.data.failedAtStartup, true)
 })
 
-test('re-exports the shared MultiEscrow contract artifact', () => {
+test('EVM auction startup marks stale Boltz operations failed without aborting', async (t) => {
+  const originalFetch = globalThis.fetch
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ error: 'could not find swap with id: stale-auction-swap' }),
+    { status: 404, headers: { 'content-type': 'application/json' } },
+  )
+
+  const store = new MemoryOperationStore()
+  await store.put({
+    id: 'stale-auction-operation',
+    kind: 'swap_in',
+    status: 'external_payment_required',
+    chainId: 412346,
+    swapId: 'stale-auction-swap',
+    data: {
+      request: {
+        tradeIndex: 0,
+        attemptIndex: 0,
+        chainId: 412346,
+        assetAddress: '0x0000000000000000000000000000000000000001',
+      },
+    },
+    createdAt: 1,
+    updatedAt: 1,
+  })
+
+  const policy = createEvmAuctionPolicy({
+    operationStore: store,
+    chains: [
+      {
+        id: 'arbitrum-regtest',
+        chainId: 412346,
+        publicClient: { chain: { id: 412346 } },
+        nativeAsset: {
+          chainId: 412346,
+          address: '0x0000000000000000000000000000000000000000',
+          denomination: 'ETH',
+          decimals: 18,
+        },
+        boltz: { apiUrl: 'https://boltz.marketplace.development' },
+        accountAbstraction: aaConfig(),
+        multiEscrowAddress: '0x0000000000000000000000000000000000000010',
+      },
+    ],
+  })
+
+  const result = await policy.startup({
+    seed: '7'.repeat(64),
+    highWaterMark: 0,
+    nextUnusedIndex: 1,
+  })
+
+  assert.equal(result.data.activeOperations, 1)
+  assert.equal(result.data.resumed, 0)
+  assert.equal(result.data.settled, 0)
+  assert.equal(result.data.failed.length, 1)
+  assert.match(result.data.failed[0].error, /Boltz API 404/)
+
+  const updated = await store.get('stale-auction-operation')
+  assert.equal(updated.status, 'failed')
+  assert.match(updated.error, /Boltz API 404/)
+  assert.equal(updated.data.failedAtStartup, true)
+})
+
+test('uses the shared MultiEscrow contract artifact', () => {
   const tradeCreated = multiEscrowAbi.find(entry => entry.type === 'event' && entry.name === 'TradeCreated')
   assert.ok(tradeCreated)
   assert.equal(tradeCreated.inputs[2].name, 'seller')
@@ -191,13 +250,46 @@ test('re-exports the shared MultiEscrow contract artifact', () => {
   assert.match(multiEscrowRuntimeBytecodeHash, /^0x[0-9a-f]{64}$/)
 })
 
-test('re-exports the shared MultiAuction contract artifact', () => {
-  const bidPlaced = multiAuctionAbi.find(entry => entry.type === 'event' && entry.name === 'BidPlaced')
-  assert.ok(bidPlaced)
-  assert.equal(bidPlaced.inputs[0].name, 'auctionId')
-  assert.equal(bidPlaced.inputs[1].name, 'bidder')
-  assert.equal(bidPlaced.inputs[2].name, 'token')
-  assert.match(multiAuctionRuntimeBytecodeHash, /^0x[0-9a-f]{64}$/)
+test('builds auction bid locks on the shared MultiEscrow contract', () => {
+  const evm = createMarketplaceEvmClient({
+    chains: [],
+    operationStore: new MemoryOperationStore(),
+    seed: '8'.repeat(64),
+  })
+  const auctionId = `0x${'9'.repeat(64)}`
+  const bidderAddress = '0x0000000000000000000000000000000000000001'
+  const sellerAddress = '0x0000000000000000000000000000000000000002'
+  const arbiterAddress = '0x0000000000000000000000000000000000000003'
+  const assetAddress = '0x0000000000000000000000000000000000000004'
+  const contractAddress = '0x0000000000000000000000000000000000000005'
+  const calls = evm.auction.placeBid({
+    auctionId,
+    bidderAddress,
+    sellerAddress,
+    arbiterAddress,
+    assetAddress,
+    bidAmount: { value: 100n, denomination: 'USD', decimals: 6 },
+    escrowFee: { value: 5n, denomination: 'USD', decimals: 6 },
+    endsAt: 1_800_000_000n,
+    contractAddress,
+  })
+
+  assert.equal(calls[0].name, 'ERC20.approve')
+  assert.equal(calls[1].name, 'MultiEscrow.createAuctionBid')
+  const decoded = decodeFunctionData({ abi: multiEscrowAbi, data: calls[1].data })
+  assert.equal(decoded.functionName, 'createTradeWithTerms')
+  assert.equal(decoded.args[0], auctionId)
+  assert.equal(decoded.args[1].toLowerCase(), bidderAddress)
+  assert.equal(decoded.args[2].toLowerCase(), sellerAddress)
+  assert.equal(decoded.args[3].toLowerCase(), arbiterAddress)
+  assert.equal(decoded.args[4].toLowerCase(), assetAddress)
+  assert.equal(decoded.args[5], 105n)
+  assert.equal(decoded.args[6], 0n)
+  assert.equal(decoded.args[8].toLowerCase(), bidderAddress)
+  assert.equal(decoded.args[9], 5n)
+  assert.equal('settle' in evm.auction, false)
+  assert.equal('cancel' in evm.auction, false)
+  assert.equal('withdraw' in evm.auction, false)
 })
 
 test('includes the ERC-20 functions used by marketplace payment execution', () => {

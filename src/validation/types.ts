@@ -18,7 +18,10 @@ export type EvmEscrowPaymentValidationRequest = {
   assetAddress: EvmAddress
   paymentAmount: EvmAmount
   bondAmount?: EvmAmount
+  timeoutClaimantAddress?: EvmAddress
   escrowFee?: EvmAmount
+  contextHash?: EvmHex
+  recycleCovenantHash?: EvmHex
   minConfirmations?: number
 }
 
@@ -34,7 +37,10 @@ export type EvmEscrowFundingLog = {
   paymentAmount: bigint
   bondAmount: bigint
   unlockAt: bigint
+  timeoutClaimantAddress: EvmAddress
   escrowFee: bigint
+  contextHash: EvmHex
+  recycleCovenantHash: EvmHex
   blockNumber?: bigint
   logIndex?: number
 }

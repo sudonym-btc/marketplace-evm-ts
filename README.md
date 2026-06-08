@@ -104,7 +104,7 @@ new device.
 ## Integration Tests
 
 The package carries `sudonym-btc/marketplace-evm-stack` as a test submodule so
-it can be tested without Hostr:
+it can be tested without any application monorepo:
 
 ```sh
 git submodule update --init --recursive
@@ -113,6 +113,6 @@ test/stack/scripts/wait.sh
 npm run test:integration
 ```
 
-The tests also work against a sibling or Hostr-level stack checkout. If no
+The tests also work against a sibling or parent-project stack checkout. If no
 generated stack config file is found, they fall back to the default local stack
 ports and compute the deployed MultiEscrow runtime hash from the chain.

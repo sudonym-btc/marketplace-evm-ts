@@ -2,11 +2,14 @@ import createOpenApiClient from 'openapi-fetch'
 
 import type {
   BoltzClient,
+  BoltzReversePair,
   BoltzReverseSwapRequest,
   BoltzReverseSwapResponse,
+  BoltzSubmarinePair,
   BoltzStatusUpdate,
   BoltzSubmarineSwapRequest,
   BoltzSubmarineSwapResponse,
+  BoltzPairTable,
 } from './types.js'
 import type { paths } from './openapi.generated.js'
 
@@ -62,6 +65,18 @@ export function createBoltzRestClient(options: BoltzRestClientOptions): BoltzCli
   })
 
   return {
+    async getReversePairs(): Promise<BoltzPairTable<BoltzReversePair>> {
+      return readData(
+        await client.GET('/swap/reverse'),
+      ) as BoltzPairTable<BoltzReversePair>
+    },
+
+    async getSubmarinePairs(): Promise<BoltzPairTable<BoltzSubmarinePair>> {
+      return readData(
+        await client.GET('/swap/submarine'),
+      ) as BoltzPairTable<BoltzSubmarinePair>
+    },
+
     async createReverseSwap(request: BoltzReverseSwapRequest): Promise<BoltzReverseSwapResponse> {
       return readData(
         await client.POST('/swap/reverse', {

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 
 import { multiEscrowAbi } from '@sudonym-btc/marketplace-evm-contracts'
-import { createPublicClient, createWalletClient, encodeFunctionData, http, parseEther } from 'viem'
+import { createPublicClient, createWalletClient, encodeFunctionData, hashStruct, http, parseEther } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import erc20Artifact from 'boltz-core/out/ERC20.sol/ERC20.json' with { type: 'json' }
 import erc20SwapArtifact from 'boltz-core/out/ERC20Swap.sol/ERC20Swap.json' with { type: 'json' }
@@ -183,7 +183,7 @@ export function escrowBalance(publicClient, contractAddress, beneficiary, assetA
 
 function escrowDomain(config, contractAddress) {
   return {
-    name: 'Hostr MultiEscrow',
+    name: 'Nostr MultiEscrow',
     version: '6',
     chainId: config.chains.arbitrumRegtest.chainId,
     verifyingContract: contractAddress,
@@ -222,6 +222,72 @@ export function signArbitrate(config, account, contractAddress, tradeId, payment
       tradeId,
       paymentFactor,
       bondFactor,
+    },
+  })
+}
+
+const tradeTermsTypes = {
+  TradeTerms: [
+    { name: 'tradeId', type: 'bytes32' },
+    { name: 'buyer', type: 'address' },
+    { name: 'seller', type: 'address' },
+    { name: 'arbiter', type: 'address' },
+    { name: 'token', type: 'address' },
+    { name: 'paymentAmount', type: 'uint256' },
+    { name: 'bondAmount', type: 'uint256' },
+    { name: 'unlockAt', type: 'uint256' },
+    { name: 'timeoutClaimant', type: 'address' },
+    { name: 'escrowFee', type: 'uint256' },
+    { name: 'contextHash', type: 'bytes32' },
+    { name: 'recycleCovenantHash', type: 'bytes32' },
+  ],
+}
+
+const recycleCovenantTypes = {
+  RecycleCovenant: [
+    { name: 'buyer', type: 'address' },
+    { name: 'seller', type: 'address' },
+    { name: 'arbiter', type: 'address' },
+    { name: 'token', type: 'address' },
+    { name: 'paymentAmount', type: 'uint256' },
+    { name: 'bondAmount', type: 'uint256' },
+    { name: 'timeoutClaimant', type: 'address' },
+    { name: 'escrowFee', type: 'uint256' },
+    { name: 'contextHash', type: 'bytes32' },
+  ],
+}
+
+export function tradeTermsHash(terms) {
+  return hashStruct({
+    types: tradeTermsTypes,
+    primaryType: 'TradeTerms',
+    data: terms,
+  })
+}
+
+export function recycleCovenantHash(covenant) {
+  return hashStruct({
+    types: recycleCovenantTypes,
+    primaryType: 'RecycleCovenant',
+    data: covenant,
+  })
+}
+
+export function signRecycle(config, account, contractAddress, sourceTradeId, targetTerms, deadline = 0n) {
+  return account.signTypedData({
+    domain: escrowDomain(config, contractAddress),
+    types: {
+      Recycle: [
+        { name: 'sourceTradeId', type: 'bytes32' },
+        { name: 'targetTermsHash', type: 'bytes32' },
+        { name: 'deadline', type: 'uint256' },
+      ],
+    },
+    primaryType: 'Recycle',
+    message: {
+      sourceTradeId,
+      targetTermsHash: tradeTermsHash(targetTerms),
+      deadline,
     },
   })
 }

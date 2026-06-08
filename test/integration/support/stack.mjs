@@ -28,8 +28,8 @@ async function detectPorts(host) {
   const standalone = { arbitrumPort: '18546', rootstockPort: '18545', boltzApiPort: '19001' }
   if (await canFetch(`http://${host}:${standalone.boltzApiPort}/v2/nodes`)) return standalone
 
-  const hostr = { arbitrumPort: '8546', rootstockPort: '8545', boltzApiPort: '9001' }
-  if (await canFetch(`http://${host}:${hostr.boltzApiPort}/v2/nodes`)) return hostr
+  const embedded = { arbitrumPort: '8546', rootstockPort: '8545', boltzApiPort: '9001' }
+  if (await canFetch(`http://${host}:${embedded.boltzApiPort}/v2/nodes`)) return embedded
 
   return standalone
 }

@@ -9,6 +9,7 @@ import type {
   EvmCreateTradeParams,
   EvmEscrowCallBuilder,
   EvmReleaseParams,
+  EvmRecycleParams,
   EvmSignedEscrowAction,
   EvmWithdrawParams,
 } from './types.js'
@@ -22,12 +23,14 @@ export function createEvmEscrowCallBuilder(): EvmEscrowCallBuilder {
     createTrade(params: EvmCreateTradeParams): NamedEvmCall[] {
       const bondAmount = params.bondAmount?.value ?? 0n
       const escrowFee = params.escrowFee?.value ?? 0n
+      const contextHash = params.contextHash ?? `0x${'0'.repeat(64)}` as const
+      const recycleCovenantHash = params.recycleCovenantHash ?? `0x${'0'.repeat(64)}` as const
       const totalNativeValue = params.assetAddress.toLowerCase() === zeroAddress ? params.paymentAmount.value + bondAmount : 0n
-      const createTradeCall = named('MultiEscrow.createTrade', {
+      const createTradeCall = named('MultiEscrow.createTradeWithTerms', {
         to: params.contractAddress,
         data: encodeFunctionData({
           abi: multiEscrowAbi,
-          functionName: 'createTrade',
+          functionName: 'createTradeWithTerms',
           args: [
             normalizeBytes32(params.tradeId, 'tradeId'),
             params.buyerAddress,
@@ -37,7 +40,10 @@ export function createEvmEscrowCallBuilder(): EvmEscrowCallBuilder {
             params.paymentAmount.value,
             bondAmount,
             params.unlockAt,
+            params.timeoutClaimantAddress ?? params.sellerAddress,
             escrowFee,
+            contextHash,
+            recycleCovenantHash,
           ],
         }),
         ...(totalNativeValue > 0n ? { value: totalNativeValue } : {}),
@@ -55,6 +61,38 @@ export function createEvmEscrowCallBuilder(): EvmEscrowCallBuilder {
         }),
         createTradeCall,
       ]
+    },
+
+    recycle(params: EvmRecycleParams): NamedEvmCall {
+      const bondAmount = params.bondAmount?.value ?? 0n
+      const escrowFee = params.escrowFee?.value ?? 0n
+      const contextHash = params.contextHash ?? `0x${'0'.repeat(64)}` as const
+      const recycleCovenantHash = params.recycleCovenantHash ?? `0x${'0'.repeat(64)}` as const
+      return named('MultiEscrow.recycle', {
+        to: params.contractAddress,
+        data: encodeFunctionData({
+          abi: multiEscrowAbi,
+          functionName: 'recycle',
+          args: [
+            normalizeBytes32(params.sourceTradeId, 'sourceTradeId'),
+            normalizeBytes32(params.targetTradeId, 'targetTradeId'),
+            params.buyerAddress,
+            params.sellerAddress,
+            params.arbiterAddress,
+            params.assetAddress,
+            params.paymentAmount.value,
+            bondAmount,
+            params.unlockAt,
+            params.timeoutClaimantAddress,
+            escrowFee,
+            contextHash,
+            recycleCovenantHash,
+            params.deadline ?? 0n,
+            params.buyerSignature ?? '0x',
+            params.arbiterSignature,
+          ],
+        }),
+      })
     },
 
     claim(params: EvmSignedEscrowAction): NamedEvmCall {

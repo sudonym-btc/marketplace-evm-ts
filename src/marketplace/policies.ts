@@ -1,4 +1,4 @@
-import { multiAuctionRuntimeBytecodeHash, multiEscrowRuntimeBytecodeHash } from '../contracts/index.js'
+import { multiEscrowRuntimeBytecodeHash } from '../contracts/index.js'
 import type { EvmHex } from '../types.js'
 import type { EvmAuctionPaymentPolicy, EvmEscrowPaymentPolicy, EvmMarketplaceChainConfig } from './types.js'
 
@@ -15,9 +15,7 @@ export function evmAuctionContractBytecodeHash(
   chains: EvmMarketplaceChainConfig[],
   chainId?: number,
 ): EvmHex {
-  const chain = chainId === undefined ? chains[0] : chains.find(candidate => candidate.chainId === chainId)
-  if (!chain) throw new Error(`No EVM marketplace chain configured for chainId ${chainId}`)
-  return chain.multiAuctionBytecodeHash ?? multiAuctionRuntimeBytecodeHash
+  return evmEscrowContractBytecodeHash(chains, chainId)
 }
 
 export function evmEscrowPolicies(chains: EvmMarketplaceChainConfig[]): EvmEscrowPaymentPolicy[] {
@@ -32,14 +30,12 @@ export function evmEscrowPolicies(chains: EvmMarketplaceChainConfig[]): EvmEscro
 }
 
 export function evmAuctionPolicies(chains: EvmMarketplaceChainConfig[]): EvmAuctionPaymentPolicy[] {
-  return chains
-    .filter(chain => Boolean(chain.multiAuctionAddress))
-    .map(chain => ({
-      method: 'evm',
-      id: `evm:${chain.chainId}:${chain.multiAuctionAddress!.toLowerCase()}`,
-      type: 'evm:multi-auction',
-      hash: evmAuctionContractBytecodeHash(chains, chain.chainId),
-      chainId: chain.chainId,
-      contractAddress: chain.multiAuctionAddress!,
-    }))
+  return chains.map(chain => ({
+    method: 'evm',
+    id: `evm:${chain.chainId}:${chain.multiEscrowAddress.toLowerCase()}:auction`,
+    type: 'evm:multi-escrow-auction-v1',
+    hash: evmAuctionContractBytecodeHash(chains, chain.chainId),
+    chainId: chain.chainId,
+    contractAddress: chain.multiEscrowAddress,
+  }))
 }

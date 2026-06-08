@@ -63,7 +63,9 @@ export function resolveEvmPaymentIntent(
   intent: GenericPaymentIntent,
 ): EvmResolvedPaymentIntent {
   if (intent.method !== 'evm') throw new Error(`EVM escrow policy cannot pay ${intent.method} intent`)
-  if (intent.subject !== 'order') throw new Error(`EVM escrow policy cannot pay ${intent.subject} intents`)
+  if (intent.subject !== 'order' && intent.subject !== 'bid') {
+    throw new Error(`EVM escrow policy cannot pay ${intent.subject} intents`)
+  }
   if (!intent.seed) throw new Error('EVM payment requires a marketplace seed')
 
   const chain = chainFor(chains, intent.contract.chainId ?? intent.asset.chainId ?? intent.policy.chainId)
@@ -76,6 +78,7 @@ export function resolveEvmPaymentIntent(
   return {
     tradeId: intent.tradeId,
     settlementId: intent.settlementId,
+    subject: intent.subject,
     accountIndex: intent.accountIndex,
     seed: intent.seed,
     chain,
@@ -91,7 +94,10 @@ export function resolveEvmPaymentIntent(
     amount: evmAmount(intent.amount, asset.decimals),
     fee: evmAmount(intent.fee, asset.decimals),
     unlockAt: BigInt(intent.unlockAt),
-    description: `Marketplace escrow ${intent.settlementId}`,
+    ...(intent.metadata ? { metadata: intent.metadata } : {}),
+    description: intent.subject === 'bid'
+      ? `Marketplace auction bid ${intent.settlementId}`
+      : `Marketplace escrow ${intent.settlementId}`,
   }
 }
 

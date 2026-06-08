@@ -1,3 +1,5 @@
+import { encodeAbiParameters, keccak256, toHex } from 'viem'
+
 import { createEvmEscrowValidator } from '../validation/escrowPaymentValidator.js'
 import type { EvmAddress, EvmAmount, EvmHash, EvmHex } from '../types.js'
 import type {
@@ -6,6 +8,8 @@ import type {
   GenericPaymentValidationResult,
   ResolvedEvmMarketplaceChainConfig,
 } from './types.js'
+
+const recycleCovenantTypeHash = keccak256(toHex('RecycleCovenant(address buyer,address seller,address arbiter,address token,uint256 paymentAmount,uint256 bondAmount,address timeoutClaimant,uint256 escrowFee,bytes32 contextHash)'))
 
 function stringValue(value: unknown, label: string): string {
   if (typeof value !== 'string' || value.length === 0) throw new Error(`Invalid ${label}`)
@@ -56,6 +60,125 @@ function amount(
   }
 }
 
+function objectValue(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Invalid ${label}`)
+  return value as Record<string, unknown>
+}
+
+function bigintString(value: unknown, label: string): bigint {
+  const raw = stringValue(value, label)
+  if (!/^\d+$/.test(raw)) throw new Error(`Invalid ${label}`)
+  return BigInt(raw)
+}
+
+function sameAddress(left: EvmAddress, right: EvmAddress): boolean {
+  return left.toLowerCase() === right.toLowerCase()
+}
+
+function recycleCovenantHash(input: {
+  buyerAddress: EvmAddress
+  sellerAddress: EvmAddress
+  arbiterAddress: EvmAddress
+  assetAddress: EvmAddress
+  paymentAmount: bigint
+  bondAmount: bigint
+  timeoutClaimantAddress: EvmAddress
+  escrowFee: bigint
+  contextHash: EvmHex
+}): EvmHex {
+  return keccak256(encodeAbiParameters(
+    [
+      { type: 'bytes32' },
+      { type: 'address' },
+      { type: 'address' },
+      { type: 'address' },
+      { type: 'address' },
+      { type: 'uint256' },
+      { type: 'uint256' },
+      { type: 'address' },
+      { type: 'uint256' },
+      { type: 'bytes32' },
+    ],
+    [
+      recycleCovenantTypeHash,
+      input.buyerAddress,
+      input.sellerAddress,
+      input.arbiterAddress,
+      input.assetAddress,
+      input.paymentAmount,
+      input.bondAmount,
+      input.timeoutClaimantAddress,
+      input.escrowFee,
+      input.contextHash,
+    ],
+  ))
+}
+
+function validateBidRecycleArgs(params: Record<string, unknown>): string | undefined {
+  if (params.subject !== 'bid') return undefined
+  let target: Record<string, unknown>
+  try {
+    const args = objectValue(params.recycleArgs, 'recycleArgs')
+    if (args.version !== 1 || args.type !== 'evm:multi-escrow-recycle-v1') return 'Invalid EVM recycleArgs type'
+    target = objectValue(args.target, 'recycleArgs.target')
+  } catch (error) {
+    return error instanceof Error ? error.message : 'Invalid EVM recycleArgs'
+  }
+
+  try {
+    const buyerAddress = address(params.buyerAddress, 'buyerAddress')
+    const sellerAddress = address(params.sellerAddress, 'sellerAddress')
+    const arbiterAddress = address(params.arbiterAddress, 'arbiterAddress')
+    const assetAddress = address(params.assetAddress, 'assetAddress')
+    const targetBuyer = address(target.buyerAddress, 'recycleArgs.target.buyerAddress')
+    const targetSeller = address(target.sellerAddress, 'recycleArgs.target.sellerAddress')
+    const targetArbiter = address(target.arbiterAddress, 'recycleArgs.target.arbiterAddress')
+    const targetAsset = address(target.assetAddress, 'recycleArgs.target.assetAddress')
+    const targetTimeoutClaimant = address(target.timeoutClaimantAddress, 'recycleArgs.target.timeoutClaimantAddress')
+    const contextHash = hash(target.contextHash, 'recycleArgs.target.contextHash')
+    const targetCovenantHash = hash(target.covenantHash, 'recycleArgs.target.covenantHash')
+
+    if (!sameAddress(targetBuyer, buyerAddress)) return 'EVM recycleArgs buyer does not match payment proof'
+    if (!sameAddress(targetSeller, sellerAddress)) return 'EVM recycleArgs seller does not match payment proof'
+    if (!sameAddress(targetArbiter, arbiterAddress)) return 'EVM recycleArgs arbiter does not match payment proof'
+    if (!sameAddress(targetAsset, assetAddress)) return 'EVM recycleArgs asset does not match payment proof'
+    if (!sameAddress(targetTimeoutClaimant, sellerAddress)) return 'EVM recycleArgs timeout claimant must be seller for promoted order'
+    if (contextHash.toLowerCase() !== hash(params.contextHash, 'contextHash').toLowerCase()) {
+      return 'EVM recycleArgs context hash does not match payment proof'
+    }
+    if (targetCovenantHash.toLowerCase() !== hash(params.recycleCovenantHash, 'recycleCovenantHash').toLowerCase()) {
+      return 'EVM recycleArgs covenant hash does not match payment proof'
+    }
+
+    const paymentAmount = bigintString(target.paymentAmount, 'recycleArgs.target.paymentAmount')
+    const bondAmount = bigintString(target.bondAmount, 'recycleArgs.target.bondAmount')
+    const escrowFee = bigintString(target.escrowFee, 'recycleArgs.target.escrowFee')
+    const expectedPaymentAmount = params.fundedValue
+      ? bigintString(params.fundedValue, 'fundedValue')
+      : bigintString(params.value, 'value') + bigintString(params.escrowFee ?? '0', 'escrowFee')
+    if (paymentAmount !== expectedPaymentAmount) return 'EVM recycleArgs payment amount does not match funded auction payment'
+    if (escrowFee !== bigintString(params.escrowFee ?? '0', 'escrowFee')) return 'EVM recycleArgs escrow fee does not match payment proof'
+
+    const computed = recycleCovenantHash({
+      buyerAddress: targetBuyer,
+      sellerAddress: targetSeller,
+      arbiterAddress: targetArbiter,
+      assetAddress: targetAsset,
+      paymentAmount,
+      bondAmount,
+      timeoutClaimantAddress: targetTimeoutClaimant,
+      escrowFee,
+      contextHash,
+    })
+    if (computed.toLowerCase() !== targetCovenantHash.toLowerCase()) {
+      return 'EVM recycleArgs do not derive the payment recycle covenant hash'
+    }
+    return undefined
+  } catch (error) {
+    return error instanceof Error ? error.message : 'Invalid EVM recycleArgs'
+  }
+}
+
 export async function validateEvmMarketplacePayment(
   chains: ResolvedEvmMarketplaceChainConfig[],
   request: GenericPaymentValidationRequest,
@@ -70,6 +193,10 @@ export async function validateEvmMarketplacePayment(
 
   try {
     const params = request.proof.params
+    const recycleArgsError = validateBidRecycleArgs(params)
+    if (recycleArgsError) {
+      return { method: 'evm', status: 'invalid', error: recycleArgsError }
+    }
     const expected = request.expected
     const validator = createEvmEscrowValidator({ chains })
     const result = await validator.validate({
@@ -84,8 +211,15 @@ export async function validateEvmMarketplacePayment(
       arbiterAddress: address(expected.participants?.escrow?.address ?? params.arbiterAddress, 'arbiterAddress'),
       assetAddress: address(params.assetAddress, 'assetAddress'),
       paymentAmount: amount(expected.amount, params, 'value', 'payment amount'),
+      ...(params.timeoutClaimantAddress
+        ? { timeoutClaimantAddress: address(params.timeoutClaimantAddress, 'timeoutClaimantAddress') }
+        : {}),
       ...(expected.fee || params.escrowFee
         ? { escrowFee: amount(expected.fee, params, 'escrowFee', 'escrow fee') }
+        : {}),
+      ...(params.contextHash ? { contextHash: hash(params.contextHash, 'contextHash') } : {}),
+      ...(params.recycleCovenantHash
+        ? { recycleCovenantHash: hash(params.recycleCovenantHash, 'recycleCovenantHash') }
         : {}),
       minConfirmations: 1,
     })
@@ -107,6 +241,9 @@ export async function validateEvmMarketplacePayment(
               sellerAddress: result.funding.sellerAddress,
               arbiterAddress: result.funding.arbiterAddress,
               assetAddress: result.funding.assetAddress,
+              timeoutClaimantAddress: result.funding.timeoutClaimantAddress,
+              contextHash: result.funding.contextHash,
+              recycleCovenantHash: result.funding.recycleCovenantHash,
             },
           }
         : {}),

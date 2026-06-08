@@ -32,6 +32,17 @@ export type SwapOutRequest = SwapAttemptRequest & {
   preLockCalls?: NamedEvmCall[]
 }
 
+export type SwapAmountLimits = {
+  source: 'boltz'
+  direction: 'swap-in' | 'swap-out'
+  from: string
+  to: string
+  amountSats?: number
+  minimal: number | null
+  maximal: number | null
+  pairHash?: string
+}
+
 export type SwapInResult =
   | {
       type: 'external_payment_required'
@@ -44,6 +55,7 @@ export type SwapInResult =
       preimageHash: EvmHex
       lockupAddress?: EvmAddress
       refundAddress?: EvmAddress
+      limits?: SwapAmountLimits
       timeoutBlockHeight: number
     }
   | {
@@ -66,6 +78,7 @@ export type SwapOutResult =
       expectedAmount?: number
       claimAddress?: EvmAddress
       lockupAddress?: EvmAddress
+      limits?: SwapAmountLimits
       timeoutBlockHeight: number
     }
   | {

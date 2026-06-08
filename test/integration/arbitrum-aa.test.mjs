@@ -3,10 +3,10 @@ import { randomBytes } from 'node:crypto'
 import { test } from 'node:test'
 
 import {
-  MemoryOperationStore,
   createMarketplaceEvmClient,
-  sha256Hex as runtimeSha256Hex,
 } from '../../dist/index.js'
+import { MemoryOperationStore } from '../../dist/utils/store.js'
+import { sha256Hex as runtimeSha256Hex } from '../../dist/utils/sha256.js'
 import {
   amount,
   createAccount,

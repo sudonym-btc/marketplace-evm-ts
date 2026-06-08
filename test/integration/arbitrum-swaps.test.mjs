@@ -3,11 +3,11 @@ import { randomBytes } from 'node:crypto'
 import { test } from 'node:test'
 
 import {
-  MemoryOperationStore,
-  createBoltzRestClient,
   createMarketplaceEvmClient,
-  sha256Hex as runtimeSha256Hex,
 } from '../../dist/index.js'
+import { createBoltzRestClient } from '../../dist/boltz/restClient.js'
+import { MemoryOperationStore } from '../../dist/utils/store.js'
+import { sha256Hex as runtimeSha256Hex } from '../../dist/utils/sha256.js'
 import { clearBoltzPendingEvmTransactions, dexQuoteIn, dexQuoteOut, encodeDexCalls, satsToTbtcWei, sha256Hex, tbtcWeiToSatsCeil, waitForSwapStatus } from './support/boltz.mjs'
 import {
   amount,
