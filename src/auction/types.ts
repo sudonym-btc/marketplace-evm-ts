@@ -60,10 +60,11 @@ export type EvmAuctionPaymentValidationResult = {
   txHash: EvmHash
   chainId: number
   confirmations?: number
+  amount?: EvmAmount
   amountMatched?: boolean
   assetMatched?: boolean
   recipientMatched?: boolean
-  escrowMatched?: boolean
+  arbiterMatched?: boolean
   bid?: EvmAuctionBidLog
   error?: string
 }

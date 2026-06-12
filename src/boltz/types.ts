@@ -1,4 +1,4 @@
-import type { EvmAddress, EvmHash, EvmHex } from '../types.js'
+import type { EvmAddress, EvmHash, EvmHex, NamedEvmCall } from '../types.js'
 import type { components } from './openapi.generated.js'
 
 type OpenApiReverseRequest = components['schemas']['ReverseRequest']
@@ -8,6 +8,7 @@ type OpenApiSubmarineRequest = components['schemas']['SubmarineRequest']
 type OpenApiSubmarineResponse = components['schemas']['SubmarineResponse']
 type OpenApiSubmarinePair = components['schemas']['SubmarinePair']
 type OpenApiSwapStatus = components['schemas']['SwapStatus']
+type OpenApiTokenQuote = components['schemas']['TokenQuote']
 
 export type BoltzSwapStatus =
   | 'swap.created'
@@ -72,11 +73,33 @@ export type BoltzReversePair = OpenApiReversePair
 
 export type BoltzSubmarinePair = OpenApiSubmarinePair
 
+export type BoltzDexQuote = {
+  amountIn: bigint
+  amountOut: bigint
+  data: OpenApiTokenQuote['data']
+}
+
+export type BoltzDexQuoteRequest = {
+  tokenIn: EvmAddress
+  tokenOut: EvmAddress
+  amount: bigint
+}
+
+export type BoltzDexEncodeRequest = {
+  recipient: EvmAddress
+  amountIn: bigint
+  amountOutMin: bigint
+  data: OpenApiTokenQuote['data']
+}
+
 export type BoltzClient = {
   getReversePairs(): Promise<BoltzPairTable<BoltzReversePair>>
   getSubmarinePairs(): Promise<BoltzPairTable<BoltzSubmarinePair>>
   createReverseSwap(request: BoltzReverseSwapRequest): Promise<BoltzReverseSwapResponse>
   createSubmarineSwap(request: BoltzSubmarineSwapRequest): Promise<BoltzSubmarineSwapResponse>
+  quoteTokenAmountIn(currency: string, request: BoltzDexQuoteRequest): Promise<BoltzDexQuote>
+  quoteTokenAmountOut(currency: string, request: BoltzDexQuoteRequest): Promise<BoltzDexQuote>
+  encodeTokenSwap(currency: string, request: BoltzDexEncodeRequest): Promise<NamedEvmCall[]>
   getSwap(id: string): Promise<BoltzStatusUpdate>
   subscribeSwap(id: string): AsyncIterable<BoltzStatusUpdate>
   getSubmarinePreimage(id: string): Promise<EvmHex>

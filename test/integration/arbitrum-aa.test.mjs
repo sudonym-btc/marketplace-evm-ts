@@ -72,6 +72,7 @@ function chainConfig() {
     id: 'arbitrum-regtest',
     chainId: arbitrum.chainId,
     rpcUrl: arbitrum.rpcUrl,
+    ...(arbitrum.blockExplorerUrl ? { blockExplorerUrl: arbitrum.blockExplorerUrl } : {}),
     publicClient,
     nativeAsset: {
       chainId: arbitrum.chainId,

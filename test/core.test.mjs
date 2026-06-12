@@ -10,7 +10,7 @@ import { multiEscrowAbi, multiEscrowRuntimeBytecodeHash } from '@sudonym-btc/mar
 import { erc20Abi } from '../dist/contracts/erc20.js'
 import { calculateEscrowFee } from '../dist/escrow/fees.js'
 import { findErc20SwapLockup } from '../dist/swaps/erc20Swap.js'
-import { deriveEvmOwnerAccount, deriveEvmSwapMaterial } from '../dist/seed.js'
+import { deriveEvmOwnerAccount, deriveEvmSwapMaterial, deriveEvmTradeId } from '../dist/seed.js'
 import { MemoryOperationStore } from '../dist/utils/store.js'
 import { createPublicClient, decodeFunctionData, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
@@ -334,6 +334,21 @@ test('derives deterministic EVM owner accounts from the marketplace seed and tra
   assert.notEqual(first.address, otherChain.address)
 })
 
+test('derives EVM trade ids from trade index only', () => {
+  const seed = '6'.repeat(64)
+  const first = deriveEvmTradeId(seed, { tradeIndex: 0 })
+  const firstWithExtra = deriveEvmTradeId(seed, {
+    tradeIndex: 0,
+    role: 'auction-bid',
+    namespace: 'custom',
+    extra: 'ignored',
+  })
+  const second = deriveEvmTradeId(seed, { tradeIndex: 1 })
+
+  assert.equal(firstWithExtra, first)
+  assert.notEqual(second, first)
+})
+
 test('derives swap material beneath the EVM trade subtree', () => {
   const seed = '6'.repeat(64)
   const first = deriveEvmSwapMaterial(seed, {
@@ -428,6 +443,46 @@ test('places escrow validation on the escrow client namespace', async () => {
   })
 
   assert.equal(result.status, 'unverifiable')
+})
+
+test('marketplace validation accepts typed evm proof drivers', async () => {
+  const policy = createEvmEscrowPolicy({
+    chains: [],
+    operationStore: new MemoryOperationStore(),
+  })
+  const request = {
+    driver: 'evm:multi-escrow',
+    proof: {
+      driver: 'evm:multi-escrow',
+      params: {
+        txHash: `0x${'1'.repeat(64)}`,
+        chainId: 33,
+        tradeId: `0x${'2'.repeat(64)}`,
+        contractAddress: '0x0000000000000000000000000000000000000000',
+        sellerAddress: '0x0000000000000000000000000000000000000000',
+        arbiterAddress: '0x0000000000000000000000000000000000000000',
+        assetAddress: '0x0000000000000000000000000000000000000000',
+        value: '1',
+        paymentAmount: '1',
+        bondAmount: '0',
+        unlockAt: '0',
+        denomination: 'RBTC',
+        decimals: 18,
+      },
+    },
+  }
+
+  const typedResult = await policy.validatePayment(request)
+  assert.equal(typedResult.status, 'unverifiable')
+  assert.notEqual(typedResult.error, 'EVM validator cannot validate evm:multi-escrow')
+
+  const wrongDriverResult = await policy.validatePayment({
+    ...request,
+    driver: 'cashu',
+    proof: { ...request.proof, driver: 'cashu' },
+  })
+  assert.equal(wrongDriverResult.status, 'unverifiable')
+  assert.equal(wrongDriverResult.error, 'EVM validator cannot validate cashu')
 })
 
 test('can build a configured executor from a local account and per-chain config', async t => {

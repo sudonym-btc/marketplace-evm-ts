@@ -39,6 +39,17 @@ function formatLimitMessage(reason: LimitReason, limits: SwapAmountLimits): stri
   return `Payment amount ${limits.amountSats} sats is above the Boltz ${limits.direction} maximum ${limits.maximal} sats for ${limits.from} -> ${limits.to}`
 }
 
+function logSwap(
+  options: SwapServiceOptions,
+  level: 'debug' | 'info' | 'warn' | 'error',
+  message: string,
+  data?: Record<string, unknown>,
+  error?: unknown,
+): void {
+  const logger = options.logger?.child?.({ scope: 'marketplace.evm.swaps' }) ?? options.logger
+  void logger?.[level](message, data, error)
+}
+
 function pairFor<Pair extends { hash?: string; limits?: { minimal?: number; maximal?: number } }>(
   pairs: BoltzPairTable<Pair>,
   from: string,
@@ -72,6 +83,18 @@ function assertBoltzLimits(input: {
     throw new SwapAmountLimitError('above_maximum', limits)
   }
   return limits
+}
+
+function routeSwapAmountToSats(input: {
+  value: bigint
+  boltzCurrency: string
+  decimals: number
+}): number {
+  return btcAmountToSats({
+    value: input.value,
+    denomination: input.boltzCurrency,
+    decimals: input.decimals,
+  })
 }
 
 function operation(
@@ -112,20 +135,70 @@ export function createEvmSwapService(options: SwapServiceOptions): EvmSwapServic
     async swapIn(request: SwapInRequest) {
       const claimAddress = await options.accounts.smartAccountAddress(request.tradeIndex, request.chainId)
       const from = request.lightningCurrency ?? 'BTC'
-      const to = request.boltzCurrency
+      const routeVia = request.routeVia
+      const to = routeVia?.boltzCurrency ?? request.boltzCurrency
+      let postClaimCalls = request.postClaimCalls
+      let requestedOnchainAmount = request.boltzAmountSats
+      let claimAssetAddress = routeVia?.assetAddress ?? request.assetAddress
+      let routeQuote:
+        | {
+            quoteCurrency: string
+            tokenIn: string
+            tokenOut?: string
+            amountIn: string
+            amountOut: string
+          }
+        | undefined
+
+      if (routeVia) {
+        if (!request.assetAddress) throw new Error('Routed Boltz swap-in requires a target assetAddress')
+        const dex = await options.boltz.quoteTokenAmountOut(routeVia.quoteCurrency, {
+          tokenIn: routeVia.assetAddress,
+          tokenOut: request.assetAddress,
+          amount: request.amount.value,
+        })
+        const dexCalls = await options.boltz.encodeTokenSwap(routeVia.quoteCurrency, {
+          recipient: claimAddress,
+          amountIn: dex.amountIn,
+          amountOutMin: dex.amountOut,
+          data: dex.data,
+        })
+        postClaimCalls = [...dexCalls, ...(request.postClaimCalls ?? [])]
+        requestedOnchainAmount = request.boltzAmountSats ?? routeSwapAmountToSats({
+          value: dex.amountIn,
+          boltzCurrency: routeVia.boltzCurrency,
+          decimals: routeVia.decimals,
+        })
+        claimAssetAddress = routeVia.assetAddress
+        routeQuote = {
+          quoteCurrency: routeVia.quoteCurrency,
+          tokenIn: routeVia.assetAddress,
+          tokenOut: request.assetAddress,
+          amountIn: dex.amountIn.toString(),
+          amountOut: dex.amountOut.toString(),
+        }
+      }
+
       const pairs = await options.boltz.getReversePairs()
       const pair = pairFor<BoltzReversePair>(pairs, from, to)
       if (!pair) {
         assertBoltzLimits({ direction: 'swap-in', from, to })
         throw new Error('unreachable')
       }
-      const requestedOnchainAmount = request.boltzAmountSats ?? btcAmountToSats(request.amount)
+      requestedOnchainAmount ??= btcAmountToSats(request.amount)
       const limits = assertBoltzLimits({
         direction: 'swap-in',
         from,
         to,
         amountSats: requestedOnchainAmount,
         pair,
+      })
+      logSwap(options, 'debug', 'Resolved Boltz swap-in limits', {
+        tradeIndex: request.tradeIndex,
+        chainId: request.chainId,
+        from,
+        to,
+        limits,
       })
 
       for (let offset = 0; offset < maxSwapInCreateAttempts; offset += 1) {
@@ -164,12 +237,26 @@ export function createEvmSwapService(options: SwapServiceOptions): EvmSwapServic
               lockupAddress: reverse.lockupAddress,
               refundAddress: reverse.refundAddress,
               timeoutBlockHeight: reverse.timeoutBlockHeight,
-              postClaimCalls: request.postClaimCalls,
+              claimAssetAddress,
+              postClaimCalls,
+              ...(routeVia ? {
+                routeVia,
+                routeQuote,
+                targetBoltzCurrency: request.boltzCurrency,
+              } : {}),
             },
             options.now,
           )
           record.swapId = reverse.id
           await options.store.put(record)
+          logSwap(options, 'info', 'Created Boltz swap-in requiring external payment', {
+            operationId: record.id,
+            swapId: reverse.id,
+            tradeIndex: request.tradeIndex,
+            attemptIndex,
+            chainId: request.chainId,
+            preimageHash: material.preimageHash,
+          })
           return {
             type: 'external_payment_required',
             operation: record,
@@ -179,13 +266,28 @@ export function createEvmSwapService(options: SwapServiceOptions): EvmSwapServic
             onchainAmount,
             preimage: material.preimage,
             preimageHash: material.preimageHash,
+            ...(claimAssetAddress ? { claimAssetAddress } : {}),
+            ...(postClaimCalls ? { postClaimCalls } : {}),
             limits,
             ...(reverse.lockupAddress ? { lockupAddress: reverse.lockupAddress } : {}),
             ...(reverse.refundAddress ? { refundAddress: reverse.refundAddress } : {}),
             timeoutBlockHeight: reverse.timeoutBlockHeight,
           }
         } catch (error) {
-          if (!isDuplicatePreimageHashError(error)) throw error
+          if (!isDuplicatePreimageHashError(error)) {
+            logSwap(options, 'error', 'Unable to create Boltz swap-in', {
+              tradeIndex: request.tradeIndex,
+              chainId: request.chainId,
+              attemptIndex,
+            }, error)
+            throw error
+          }
+          logSwap(options, 'warn', 'Boltz swap-in preimage hash already exists; retrying deterministic attempt', {
+            tradeIndex: request.tradeIndex,
+            chainId: request.chainId,
+            attemptIndex,
+            preimageHash: material.preimageHash,
+          })
         }
       }
 
@@ -213,6 +315,11 @@ export function createEvmSwapService(options: SwapServiceOptions): EvmSwapServic
           options.now,
         )
         await options.store.put(record)
+        logSwap(options, 'info', 'Created swap-out request requiring external invoice', {
+          operationId: record.id,
+          tradeIndex: request.tradeIndex,
+          chainId: request.chainId,
+        })
         return {
           type: 'external_invoice_required',
           operation: record,
@@ -261,6 +368,12 @@ export function createEvmSwapService(options: SwapServiceOptions): EvmSwapServic
       )
       record.swapId = submarine.id
       await options.store.put(record)
+      logSwap(options, 'info', 'Created Boltz swap-out awaiting on-chain resolution', {
+        operationId: record.id,
+        swapId: submarine.id,
+        tradeIndex: request.tradeIndex,
+        chainId: request.chainId,
+      })
       return {
         type: 'awaiting_resolution',
         operation: record,
@@ -281,6 +394,11 @@ export function createEvmSwapService(options: SwapServiceOptions): EvmSwapServic
         record.data = { ...record.data, latestStatus }
         record.updatedAt = nowSeconds(options.now)
         await options.store.put(record)
+        logSwap(options, 'debug', 'Updated EVM swap operation from Boltz status', {
+          operationId: id,
+          swapId: record.swapId,
+          status: latestStatus.status,
+        })
       }
       return { operation: record, ...(latestStatus ? { latestStatus } : {}) }
     },

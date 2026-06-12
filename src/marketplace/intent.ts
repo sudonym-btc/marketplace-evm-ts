@@ -19,6 +19,13 @@ function hash(value: string | undefined, label: string): EvmHex {
   return normalized as EvmHex
 }
 
+function logicalCurrency(denomination: string): string {
+  const normalized = denomination.toUpperCase()
+  if (normalized === 'USDT' || normalized === 'USDC') return 'USD'
+  if (normalized === 'SAT' || normalized === 'SATS' || normalized === 'XBT') return 'BTC'
+  return normalized
+}
+
 function chainFor(
   chains: ResolvedEvmMarketplaceChainConfig[],
   chainId: number | undefined,
@@ -41,18 +48,21 @@ function assetForIntent(
   return {
     method: 'evm',
     assetId: `${chain.chainId}:${asset.address.toLowerCase()}`,
+    currency: intent.asset.currency ?? logicalCurrency(asset.denomination),
     denomination: asset.denomination,
     decimals: asset.decimals,
     appId: 'marketplace-evm-ts',
     chainId: chain.chainId,
     assetAddress: asset.address,
     ...(asset.boltzCurrency ? { boltzCurrency: asset.boltzCurrency } : {}),
+    ...(asset.boltzRouteVia ? { boltzRouteVia: asset.boltzRouteVia } : {}),
   }
 }
 
-function evmAmount(amount: { value: string; denomination: string; decimals: number }, decimals: number): EvmAmount {
+function evmAmount(amount: { value: string; currency?: string; denomination: string; decimals: number }, decimals: number): EvmAmount {
   return {
     value: BigInt(amount.value),
+    ...(amount.currency ? { currency: amount.currency } : {}),
     denomination: amount.denomination,
     decimals,
   }
@@ -63,8 +73,8 @@ export function resolveEvmPaymentIntent(
   intent: GenericPaymentIntent,
 ): EvmResolvedPaymentIntent {
   if (intent.method !== 'evm') throw new Error(`EVM escrow policy cannot pay ${intent.method} intent`)
-  if (intent.subject !== 'order' && intent.subject !== 'bid') {
-    throw new Error(`EVM escrow policy cannot pay ${intent.subject} intents`)
+  if (intent.purpose !== 'order' && intent.purpose !== 'bid') {
+    throw new Error(`EVM escrow policy cannot pay ${intent.purpose} intents`)
   }
   if (!intent.seed) throw new Error('EVM payment requires a marketplace seed')
 
@@ -72,13 +82,13 @@ export function resolveEvmPaymentIntent(
   const asset = assetForIntent(chain, intent)
   const contractAddress = address(intent.contract.address ?? intent.policy.contractAddress, 'contractAddress')
   const sellerAddress = address(intent.participants.seller.address, 'sellerAddress')
-  const arbiterAddress = address(intent.participants.escrow.address, 'arbiterAddress')
+  const arbiterAddress = address(intent.participants.arbiter.address, 'arbiterAddress')
   const contractBytecodeHash = hash(intent.contract.bytecodeHash ?? intent.policy.hash, 'contractBytecodeHash')
 
   return {
     tradeId: intent.tradeId,
     settlementId: intent.settlementId,
-    subject: intent.subject,
+    purpose: intent.purpose,
     accountIndex: intent.accountIndex,
     seed: intent.seed,
     chain,
@@ -95,7 +105,7 @@ export function resolveEvmPaymentIntent(
     fee: evmAmount(intent.fee, asset.decimals),
     unlockAt: BigInt(intent.unlockAt),
     ...(intent.metadata ? { metadata: intent.metadata } : {}),
-    description: intent.subject === 'bid'
+    description: intent.purpose === 'bid'
       ? `Marketplace auction bid ${intent.settlementId}`
       : `Marketplace escrow ${intent.settlementId}`,
   }

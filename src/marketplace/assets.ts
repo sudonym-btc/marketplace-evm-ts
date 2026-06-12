@@ -5,6 +5,13 @@ function chainAssetId(chainId: number, asset: EvmAsset): string {
   return `${chainId}:${asset.address.toLowerCase()}`
 }
 
+function logicalCurrency(denomination: string): string {
+  const normalized = denomination.toUpperCase()
+  if (normalized === 'USDT' || normalized === 'USDC') return 'USD'
+  if (normalized === 'SAT' || normalized === 'SATS' || normalized === 'XBT') return 'BTC'
+  return normalized
+}
+
 export function evmPaymentAssets(
   chains: EvmMarketplaceChainConfig[],
   appId = 'marketplace-evm-ts',
@@ -13,6 +20,7 @@ export function evmPaymentAssets(
     [chain.nativeAsset, ...(chain.assets ?? [])].map(asset => ({
       method: 'evm',
       assetId: chainAssetId(chain.chainId, asset),
+      currency: logicalCurrency(asset.denomination),
       denomination: asset.denomination,
       decimals: asset.decimals,
       appId,

@@ -5,13 +5,67 @@ import { createMarketplaceEvmClient } from '../client.js'
 import { erc20SwapClaimCall, findErc20SwapLockup } from '../swaps/erc20Swap.js'
 import { zeroAddress } from '../utils/hex.js'
 import { resolveEvmPaymentIntent } from './intent.js'
-import type { EvmPayRequest, GenericPolicyPaymentState, GenericPaymentProof } from './types.js'
-import type { EvmHash, EvmHex } from '../types.js'
+import type {
+  EvmPayRequest,
+  EvmResolvedPaymentIntent,
+  GenericPolicyPaymentState,
+  GenericPaymentProof,
+} from './types.js'
+import type { EvmBoltzRouteVia, EvmHash, EvmHex } from '../types.js'
+import type { SwapInRequest } from '../swaps/types.js'
 
 const swapPollIntervalMs = 2_000
 const swapPaymentTimeoutMs = 20 * 60_000
 const zeroHash = `0x${'0'.repeat(64)}` as EvmHex
 const recycleCovenantTypeHash = keccak256(toHex('RecycleCovenant(address buyer,address seller,address arbiter,address token,uint256 paymentAmount,uint256 bondAmount,address timeoutClaimant,uint256 escrowFee,bytes32 contextHash)'))
+
+function logEvmPay(
+  request: EvmPayRequest,
+  level: 'debug' | 'info' | 'warn' | 'error',
+  message: string,
+  data?: Record<string, unknown>,
+  error?: unknown,
+): void {
+  const logger = request.logger?.child?.({ scope: 'marketplace.evm.pay' }) ?? request.logger
+  void logger?.[level](message, data, error)
+}
+
+function boltzQuoteCurrency(intent: EvmResolvedPaymentIntent): string | undefined {
+  return intent.chain.boltzCurrency ?? intent.chain.boltz?.nativeCurrencyByChainId?.[intent.chain.chainId]
+}
+
+function sameBoltzCurrency(value: string | undefined, expected: string): boolean {
+  return value?.toUpperCase() === expected.toUpperCase()
+}
+
+function defaultRouteVia(intent: EvmResolvedPaymentIntent): EvmBoltzRouteVia | undefined {
+  if (!sameBoltzCurrency(intent.asset.boltzCurrency, 'USDT')) return undefined
+  const quoteCurrency = boltzQuoteCurrency(intent)
+  if (!quoteCurrency) return undefined
+  const routeAsset = [intent.chain.nativeAsset, ...(intent.chain.assets ?? [])].find(asset =>
+    sameBoltzCurrency(asset.boltzCurrency, 'tBTC'),
+  )
+  if (!routeAsset?.boltzCurrency) return undefined
+  return {
+    boltzCurrency: routeAsset.boltzCurrency,
+    assetAddress: routeAsset.address,
+    decimals: routeAsset.decimals,
+    quoteCurrency,
+  }
+}
+
+function swapInRouteVia(intent: EvmResolvedPaymentIntent): SwapInRequest['routeVia'] | undefined {
+  const routeVia = intent.asset.boltzRouteVia ?? defaultRouteVia(intent)
+  if (!routeVia) return undefined
+  const quoteCurrency = routeVia.quoteCurrency ?? boltzQuoteCurrency(intent)
+  if (!quoteCurrency) return undefined
+  return {
+    boltzCurrency: routeVia.boltzCurrency,
+    assetAddress: routeVia.assetAddress,
+    decimals: routeVia.decimals,
+    quoteCurrency,
+  }
+}
 
 type EvmRecycleArgs = {
   version: 1
@@ -53,18 +107,20 @@ function paymentProof(options: {
   arbiterAddress: `0x${string}`
   assetAddress: `0x${string}`
   value: bigint
+  bondAmount: bigint
+  currency?: string
   denomination: string
   decimals: number
   escrowFee: bigint
-  subject: 'order' | 'bid'
   fundedValue: bigint
+  unlockAt: bigint
   timeoutClaimantAddress: `0x${string}`
   contextHash: EvmHex
   recycleCovenantHash: EvmHex
   recycleArgs?: EvmRecycleArgs
 }): GenericPaymentProof {
   return {
-    method: 'evm',
+    driver: 'evm',
     params: {
       txHash: options.txHash,
       policyId: options.policyId,
@@ -79,11 +135,14 @@ function paymentProof(options: {
       arbiterAddress: options.arbiterAddress,
       assetAddress: options.assetAddress,
       value: options.value.toString(),
+      paymentAmount: options.value.toString(),
       fundedValue: options.fundedValue.toString(),
+      bondAmount: options.bondAmount.toString(),
+      ...(options.currency ? { currency: options.currency } : {}),
       denomination: options.denomination,
       decimals: options.decimals,
       escrowFee: options.escrowFee.toString(),
-      subject: options.subject,
+      unlockAt: options.unlockAt.toString(),
       timeoutClaimantAddress: options.timeoutClaimantAddress,
       contextHash: options.contextHash,
       recycleCovenantHash: options.recycleCovenantHash,
@@ -104,7 +163,7 @@ function sortedJson(value: unknown): string {
 }
 
 function paymentContextHash(input: {
-  subject: 'order' | 'bid'
+  purpose: 'order' | 'bid'
   tradeId: string
   settlementId: string
   chainId: number
@@ -267,22 +326,36 @@ async function waitForSwapLockTransaction(
 
 export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<GenericPolicyPaymentState> {
   const intent = resolveEvmPaymentIntent(request.chains, request.intent)
+  logEvmPay(request, 'info', 'Resolved EVM payment intent', {
+    purpose: intent.purpose,
+    settlementId: intent.settlementId,
+    tradeIndex: intent.accountIndex,
+    chainId: intent.chain.chainId,
+    denomination: intent.amount.denomination,
+    amount: intent.amount.value.toString(),
+  })
   const evm = createMarketplaceEvmClient({
     chains: request.chains,
     operationStore: request.operationStore,
     seed: intent.seed,
     tradeIndex: intent.accountIndex,
     ...(intent.chain.boltz ? { boltz: intent.chain.boltz } : {}),
+    ...(request.logger ? { logger: request.logger } : {}),
   })
   if (!evm.executor) throw new Error('EVM deterministic AA execution is unavailable')
 
   const buyerAddress = await evm.executor.getAddress(intent.chain.chainId)
+  logEvmPay(request, 'debug', 'Resolved EVM buyer account', {
+    buyerAddress,
+    chainId: intent.chain.chainId,
+    tradeIndex: intent.accountIndex,
+  })
   const escrowPaymentAmount = {
     ...intent.amount,
     value: intent.amount.value + intent.fee.value,
   }
   const targetOrder = targetOrderContext(intent.metadata?.targetOrder, intent.metadata?.targetListingAnchor)
-  const contextHash = intent.subject === 'bid'
+  const contextHash = intent.purpose === 'bid'
     ? auctionOrderContextHash({
         chainId: intent.chain.chainId,
         contractAddress: intent.contractAddress,
@@ -295,7 +368,7 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
         order: targetOrder,
       })
     : paymentContextHash({
-        subject: intent.subject,
+        purpose: intent.purpose,
         tradeId: intent.tradeId,
         settlementId: intent.settlementId,
         chainId: intent.chain.chainId,
@@ -305,8 +378,8 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
         decimals: intent.amount.decimals,
         listingAnchor: intent.metadata?.listingAnchor,
       })
-  const timeoutClaimantAddress = intent.subject === 'bid' ? buyerAddress : intent.sellerAddress
-  const recycleCovenantHashValue = intent.subject === 'bid'
+  const timeoutClaimantAddress = intent.purpose === 'bid' ? buyerAddress : intent.sellerAddress
+  const recycleCovenantHashValue = intent.purpose === 'bid'
     ? recycleCovenantHash({
         buyerAddress,
         sellerAddress: intent.sellerAddress,
@@ -319,7 +392,7 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
         contextHash,
       })
     : zeroHash
-  const bidRecycleArgs = intent.subject === 'bid'
+  const bidRecycleArgs = intent.purpose === 'bid'
     ? recycleArgs({
         intent,
         buyerAddress,
@@ -354,8 +427,18 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
           args: [buyerAddress],
         })) as bigint)
   const requiredBalance = escrowPaymentAmount.value
+  logEvmPay(request, 'debug', 'Checked EVM escrow funding balance', {
+    balance: balance.toString(),
+    requiredBalance: requiredBalance.toString(),
+    denomination: intent.amount.denomination,
+    chainId: intent.chain.chainId,
+  })
 
   if (balance >= requiredBalance) {
+    logEvmPay(request, 'info', 'Funding escrow directly from EVM balance', {
+      settlementId: intent.settlementId,
+      tradeIndex: intent.accountIndex,
+    })
     const execution = await evm.executor.execute(calls, {
       chainId: intent.chain.chainId,
       operationId: `escrow-${intent.settlementId}`,
@@ -371,6 +454,8 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
       arbiterAddress: intent.arbiterAddress,
       assetAddress: intent.asset.assetAddress,
       paymentAmount: intent.amount,
+      bondAmount: { value: 0n, denomination: intent.amount.denomination, decimals: intent.amount.decimals },
+      unlockAt: intent.unlockAt,
       timeoutClaimantAddress,
       escrowFee: intent.fee,
       contextHash,
@@ -381,6 +466,11 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
       ...request.state,
       nextTradeIndex: intent.accountIndex + 1,
       maxUsedIndex: Math.max(request.state.maxUsedIndex, intent.accountIndex),
+    })
+    logEvmPay(request, 'info', 'EVM escrow funded directly', {
+      txHash: execution.txHash,
+      validationStatus: validation.status,
+      settlementId: intent.settlementId,
     })
     yield {
       type: 'paid',
@@ -397,11 +487,13 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
         arbiterAddress: intent.arbiterAddress,
         assetAddress: intent.asset.assetAddress,
         value: intent.amount.value,
+        bondAmount: 0n,
+        ...(intent.amount.currency ? { currency: intent.amount.currency } : {}),
         denomination: intent.amount.denomination,
         decimals: intent.amount.decimals,
         escrowFee: intent.fee.value,
-        subject: intent.subject,
         fundedValue: escrowPaymentAmount.value,
+        unlockAt: intent.unlockAt,
         timeoutClaimantAddress,
         contextHash,
         recycleCovenantHash: recycleCovenantHashValue,
@@ -409,7 +501,7 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
       }),
       data: {
         method: 'evm',
-        subject: intent.subject,
+        purpose: intent.purpose,
         tradeIndex: intent.accountIndex,
         txHash: execution.txHash,
         validationStatus: validation.status,
@@ -423,6 +515,13 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
     throw new Error(`Insufficient ${intent.asset.denomination} balance and no Boltz swap route is configured`)
   }
 
+  logEvmPay(request, 'info', 'Creating Boltz swap-in for EVM escrow funding', {
+    settlementId: intent.settlementId,
+    tradeIndex: intent.accountIndex,
+    boltzCurrency: intent.asset.boltzCurrency,
+    amount: escrowPaymentAmount.value.toString(),
+  })
+  const routeVia = swapInRouteVia(intent)
   const swap = await evm.swaps.swapIn({
     tradeIndex: intent.accountIndex,
     attemptIndex: 0,
@@ -431,9 +530,16 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
     assetAddress: intent.asset.assetAddress,
     amount: escrowPaymentAmount,
     description: intent.description,
+    ...(routeVia ? { routeVia } : {}),
     postClaimCalls: calls,
   })
   if (swap.type !== 'external_payment_required') throw new Error('Unexpected swap-in result')
+  logEvmPay(request, 'info', 'External Lightning payment required for EVM swap-in', {
+    swapId: swap.swapId,
+    preimageHash: swap.preimageHash,
+    tradeIndex: intent.accountIndex,
+    limits: swap.limits,
+  })
 
   request.setState({
     ...request.state,
@@ -453,7 +559,7 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
       description: intent.description,
       data: {
         method: 'evm',
-        subject: intent.subject,
+        purpose: intent.purpose,
         swapId: swap.swapId,
         preimageHash: swap.preimageHash,
         tradeIndex: intent.accountIndex,
@@ -464,7 +570,7 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
     proof: null,
     data: {
       method: 'evm',
-      subject: intent.subject,
+      purpose: intent.purpose,
       swapId: swap.swapId,
       tradeIndex: intent.accountIndex,
       limits: swap.limits,
@@ -476,19 +582,28 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
     status: 'Waiting for Lightning payment',
     data: {
         method: 'evm',
-        subject: intent.subject,
+        purpose: intent.purpose,
         swapId: swap.swapId,
       tradeIndex: intent.accountIndex,
     },
   }
+  logEvmPay(request, 'info', 'Waiting for Lightning payment', {
+    swapId: swap.swapId,
+    tradeIndex: intent.accountIndex,
+  })
 
   const lockTxHash = await waitForSwapLockTransaction(evm, swap.operation.id)
+  logEvmPay(request, 'info', 'Boltz lock transaction detected', {
+    swapId: swap.swapId,
+    txHash: lockTxHash,
+    tradeIndex: intent.accountIndex,
+  })
   yield {
     type: 'payment_progress',
     status: 'Boltz lock transaction detected',
     data: {
       method: 'evm',
-      subject: intent.subject,
+      purpose: intent.purpose,
       swapId: swap.swapId,
       tradeIndex: intent.accountIndex,
       txHash: lockTxHash,
@@ -497,19 +612,25 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
 
   const receipt = await intent.chain.publicClient.waitForTransactionReceipt({ hash: lockTxHash })
   if (receipt.status !== 'success') throw new Error(`Boltz lock transaction reverted: ${lockTxHash}`)
+  const claimAssetAddress = swap.claimAssetAddress ?? intent.asset.assetAddress
   const lockup = findErc20SwapLockup(receipt.logs, {
     transactionHash: lockTxHash,
     preimageHash: swap.preimageHash,
     claimAddress: buyerAddress,
-    tokenAddress: intent.asset.assetAddress,
+    tokenAddress: claimAssetAddress,
   })
 
+  logEvmPay(request, 'info', 'Claiming Boltz swap into escrow', {
+    swapId: swap.swapId,
+    lockTxHash,
+    tradeIndex: intent.accountIndex,
+  })
   yield {
     type: 'payment_progress',
     status: 'Claiming swap into escrow',
     data: {
       method: 'evm',
-      subject: intent.subject,
+      purpose: intent.purpose,
       swapId: swap.swapId,
       tradeIndex: intent.accountIndex,
       txHash: lockTxHash,
@@ -526,7 +647,7 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
         refundAddress: lockup.refundAddress,
         timelock: lockup.timelock,
       }),
-      ...calls,
+      ...(swap.postClaimCalls ?? calls),
     ],
     {
       chainId: intent.chain.chainId,
@@ -544,6 +665,8 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
     arbiterAddress: intent.arbiterAddress,
     assetAddress: intent.asset.assetAddress,
     paymentAmount: intent.amount,
+    bondAmount: { value: 0n, denomination: intent.amount.denomination, decimals: intent.amount.decimals },
+    unlockAt: intent.unlockAt,
     timeoutClaimantAddress,
     escrowFee: intent.fee,
     contextHash,
@@ -558,9 +681,16 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
     lockTxHash,
     claimTxHash: execution.txHash,
     validationStatus: validation.status,
-    subject: intent.subject,
+    purpose: intent.purpose,
   }
   await request.operationStore.put(swap.operation)
+  logEvmPay(request, 'info', 'EVM swap claimed and escrow funded', {
+    swapId: swap.swapId,
+    lockTxHash,
+    claimTxHash: execution.txHash,
+    validationStatus: validation.status,
+    settlementId: intent.settlementId,
+  })
 
   yield {
     type: 'paid',
@@ -577,11 +707,13 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
       arbiterAddress: intent.arbiterAddress,
       assetAddress: intent.asset.assetAddress,
       value: intent.amount.value,
+      bondAmount: 0n,
+      ...(intent.amount.currency ? { currency: intent.amount.currency } : {}),
       denomination: intent.amount.denomination,
       decimals: intent.amount.decimals,
       escrowFee: intent.fee.value,
-      subject: intent.subject,
       fundedValue: escrowPaymentAmount.value,
+      unlockAt: intent.unlockAt,
       timeoutClaimantAddress,
       contextHash,
       recycleCovenantHash: recycleCovenantHashValue,
@@ -589,7 +721,7 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
     }),
     data: {
       method: 'evm',
-      subject: intent.subject,
+      purpose: intent.purpose,
       tradeIndex: intent.accountIndex,
       txHash: execution.txHash,
       validationStatus: validation.status,

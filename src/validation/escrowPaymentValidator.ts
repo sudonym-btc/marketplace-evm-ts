@@ -113,9 +113,12 @@ export function createEvmEscrowValidator(
 
       const assetMatched = funding.assetAddress.toLowerCase() === request.assetAddress.toLowerCase()
       const recipientMatched = funding.sellerAddress.toLowerCase() === request.sellerAddress.toLowerCase()
-      const escrowMatched = funding.arbiterAddress.toLowerCase() === request.arbiterAddress.toLowerCase()
+      const arbiterMatched = funding.arbiterAddress.toLowerCase() === request.arbiterAddress.toLowerCase()
       const timeoutClaimantMatched = request.timeoutClaimantAddress
         ? funding.timeoutClaimantAddress.toLowerCase() === request.timeoutClaimantAddress.toLowerCase()
+        : true
+      const unlockAtMatched = request.unlockAt !== undefined
+        ? funding.unlockAt === request.unlockAt
         : true
       const contextMatched = request.contextHash
         ? funding.contextHash.toLowerCase() === request.contextHash.toLowerCase()
@@ -130,8 +133,9 @@ export function createEvmEscrowValidator(
 
       if (!assetMatched) return mismatch(request, 'Escrow asset mismatch', funding)
       if (!recipientMatched) return mismatch(request, 'Escrow seller address mismatch', funding)
-      if (!escrowMatched) return mismatch(request, 'Escrow arbiter address mismatch', funding)
+      if (!arbiterMatched) return mismatch(request, 'Arbiter address mismatch', funding)
       if (!timeoutClaimantMatched) return mismatch(request, 'Escrow timeout claimant mismatch', funding)
+      if (!unlockAtMatched) return mismatch(request, 'Escrow unlock time mismatch', funding)
       if (!contextMatched) return mismatch(request, 'Escrow context hash mismatch', funding)
       if (!recycleCovenantMatched) return mismatch(request, 'Escrow recycle covenant hash mismatch', funding)
       if (!amountMatched) return mismatch(request, 'Escrow amount mismatch', funding)
@@ -150,7 +154,7 @@ export function createEvmEscrowValidator(
             amountMatched,
             assetMatched,
             recipientMatched,
-            escrowMatched,
+            arbiterMatched,
             funding,
             error: `Waiting for ${request.minConfirmations} confirmations`,
           }
@@ -163,10 +167,11 @@ export function createEvmEscrowValidator(
         txHash: request.txHash,
         chainId: request.chainId,
         ...(confirmations !== undefined ? { confirmations } : {}),
+        amount: request.paymentAmount,
         amountMatched,
         assetMatched,
         recipientMatched,
-        escrowMatched,
+        arbiterMatched,
         funding,
       }
     },

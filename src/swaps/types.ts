@@ -4,6 +4,7 @@ import type { EvmAddress, EvmAmount, EvmOperationRecord, EvmOperationStore } fro
 import type { EvmAccountManager } from '../accounts.js'
 import type { EvmHex } from '../types.js'
 import type { EvmSeedConfig } from '../seed.js'
+import type { MarketplaceDriverLogger } from '@sudonym-btc/marketplace-driver-interface'
 
 export type SwapAttemptRequest = {
   tradeIndex: number
@@ -18,6 +19,12 @@ export type SwapInRequest = SwapAttemptRequest & {
   amount: EvmAmount
   boltzAmountSats?: number
   description?: string
+  routeVia?: {
+    boltzCurrency: string
+    assetAddress: EvmAddress
+    decimals: number
+    quoteCurrency: string
+  }
   postClaimCalls?: NamedEvmCall[]
 }
 
@@ -55,6 +62,8 @@ export type SwapInResult =
       preimageHash: EvmHex
       lockupAddress?: EvmAddress
       refundAddress?: EvmAddress
+      claimAssetAddress?: EvmAddress
+      postClaimCalls?: NamedEvmCall[]
       limits?: SwapAmountLimits
       timeoutBlockHeight: number
     }
@@ -98,6 +107,7 @@ export type SwapServiceOptions = {
   seed: string | EvmSeedConfig
   accounts: EvmAccountManager
   now?: () => number
+  logger?: MarketplaceDriverLogger
 }
 
 export type EvmSwapService = {

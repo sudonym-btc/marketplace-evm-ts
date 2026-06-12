@@ -55,6 +55,7 @@ export async function readStackConfig() {
 
 function createDefaultStackConfig({ arbitrumPort, rootstockPort, boltzApiPort }) {
   const host = process.env.MARKETPLACE_EVM_STACK_HOST ?? '127.0.0.1'
+  const arbitrumExplorerPort = process.env.MARKETPLACE_EVM_ARBITRUM_EXPLORER_PORT ?? '15100'
 
   return {
     version: 1,
@@ -63,6 +64,7 @@ function createDefaultStackConfig({ arbitrumPort, rootstockPort, boltzApiPort })
         name: 'Arbitrum Regtest',
         chainId: 412346,
         rpcUrl: `http://${host}:${arbitrumPort}`,
+        blockExplorerUrl: `http://${host}:${arbitrumExplorerPort}`,
         nativeAsset: {
           denomination: 'ETH',
           decimals: 18,
@@ -85,6 +87,12 @@ function createDefaultStackConfig({ arbitrumPort, rootstockPort, boltzApiPort })
             denomination: 'USD',
             decimals: 6,
             boltzCurrency: 'USDT',
+            boltzRouteVia: {
+              boltzCurrency: 'tBTC',
+              assetAddress: '0x948B3c65b89DF0B4894ABE91E6D02FE579834F8F',
+              decimals: 18,
+              quoteCurrency: 'ARB',
+            },
           },
         },
       },

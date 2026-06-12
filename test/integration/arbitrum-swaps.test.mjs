@@ -276,7 +276,7 @@ test('swap-in can bridge through tBTC, DEX into USDT, and fund a USDT escrow', {
   assert.equal(validation.status, 'valid')
   assert.equal(validation.assetMatched, true)
   assert.equal(validation.recipientMatched, true)
-  assert.equal(validation.escrowMatched, true)
+  assert.equal(validation.arbiterMatched, true)
 })
 
 test('swap-out can DEX USDT into tBTC and settle a Lightning invoice', { timeout: 240_000 }, async () => {

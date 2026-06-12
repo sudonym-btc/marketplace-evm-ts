@@ -61,6 +61,7 @@ export function createMarketplaceEvmClient(options: MarketplaceEvmClientOptions)
         seed: options.seed!,
         accounts: accounts!,
         ...(options.now ? { now: options.now } : {}),
+        ...(options.logger ? { logger: options.logger } : {}),
       })
     : undefined
 

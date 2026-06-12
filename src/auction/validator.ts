@@ -79,10 +79,11 @@ export function createEvmAuctionValidator(
         txHash: escrowResult.txHash,
         chainId: escrowResult.chainId,
         ...(escrowResult.confirmations !== undefined ? { confirmations: escrowResult.confirmations } : {}),
+        ...(escrowResult.status === 'valid' ? { amount: request.bidAmount } : {}),
         ...(escrowResult.amountMatched !== undefined ? { amountMatched: escrowResult.amountMatched } : {}),
         ...(escrowResult.assetMatched !== undefined ? { assetMatched: escrowResult.assetMatched } : {}),
         ...(recipientMatched !== undefined ? { recipientMatched } : {}),
-        ...(escrowResult.escrowMatched !== undefined ? { escrowMatched: escrowResult.escrowMatched } : {}),
+        ...(escrowResult.arbiterMatched !== undefined ? { arbiterMatched: escrowResult.arbiterMatched } : {}),
         ...(bid ? { bid } : {}),
         ...(escrowResult.error ? { error: escrowResult.error } : {}),
       }

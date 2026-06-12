@@ -25,6 +25,8 @@ function boltzStub(overrides = {}) {
     reverseRequests: [],
     submarineRequests: [],
     statusRequests: [],
+    quoteOutRequests: [],
+    encodeRequests: [],
 
     async getReversePairs() {
       return {
@@ -72,6 +74,25 @@ function boltzStub(overrides = {}) {
         address: '0x0000000000000000000000000000000000000010',
         timeoutBlockHeight: 456,
       }
+    },
+
+    async quoteTokenAmountOut(currency, request) {
+      this.quoteOutRequests.push({ currency, request })
+      return {
+        amountIn: 500_000_000_000_000n,
+        amountOut: request.amount,
+        data: { type: 'mock-dex' },
+      }
+    },
+
+    async encodeTokenSwap(currency, request) {
+      this.encodeRequests.push({ currency, request })
+      return [{
+        name: 'DEX.0',
+        to: '0x0000000000000000000000000000000000000d0e',
+        value: 0n,
+        data: '0x1234',
+      }]
     },
 
     async getSwap(id) {
@@ -324,6 +345,78 @@ test('swap-in rejects unsupported Boltz pairs before amount conversion', async (
     },
   )
   assert.equal(boltz.reverseRequests.length, 0)
+})
+
+test('swap-in routes stablecoin funding through tBTC DEX calls before post-claim escrow calls', async () => {
+  const boltz = boltzStub()
+  const store = new MemoryOperationStore()
+  const service = createEvmSwapService({ boltz, store, seed, accounts, now: () => 175 })
+  const escrowCall = {
+    name: 'Escrow.createTrade',
+    to: '0x0000000000000000000000000000000000000e50',
+    value: 0n,
+    data: '0xabcd',
+  }
+
+  const result = await service.swapIn({
+    tradeIndex: 2,
+    attemptIndex: 0,
+    chainId: 42161,
+    boltzCurrency: 'USDT',
+    lightningCurrency: 'BTC',
+    assetAddress: '0x00000000000000000000000000000000000000ad',
+    amount: { value: 225_000_000n, denomination: 'USD', decimals: 6 },
+    routeVia: {
+      boltzCurrency: 'tBTC',
+      assetAddress: '0x0000000000000000000000000000000000000b7c',
+      decimals: 18,
+      quoteCurrency: 'ARB',
+    },
+    postClaimCalls: [escrowCall],
+  })
+
+  assert.equal(result.type, 'external_payment_required')
+  assert.equal(result.claimAssetAddress, '0x0000000000000000000000000000000000000b7c')
+  assert.deepEqual(boltz.quoteOutRequests, [{
+    currency: 'ARB',
+    request: {
+      tokenIn: '0x0000000000000000000000000000000000000b7c',
+      tokenOut: '0x00000000000000000000000000000000000000ad',
+      amount: 225_000_000n,
+    },
+  }])
+  assert.deepEqual(boltz.encodeRequests, [{
+    currency: 'ARB',
+    request: {
+      recipient: '0x000000000000000000000000000000000000c102',
+      amountIn: 500_000_000_000_000n,
+      amountOutMin: 225_000_000n,
+      data: { type: 'mock-dex' },
+    },
+  }])
+  assert.equal(boltz.reverseRequests[0].to, 'tBTC')
+  assert.equal(boltz.reverseRequests[0].onchainAmount, 50_000)
+  assert.deepEqual(result.postClaimCalls, [
+    {
+      name: 'DEX.0',
+      to: '0x0000000000000000000000000000000000000d0e',
+      value: 0n,
+      data: '0x1234',
+    },
+    escrowCall,
+  ])
+
+  const stored = await store.get(result.operation.id)
+  assert.equal(stored.data.claimAssetAddress, '0x0000000000000000000000000000000000000b7c')
+  assert.equal(stored.data.targetBoltzCurrency, 'USDT')
+  assert.deepEqual(stored.data.routeQuote, {
+    quoteCurrency: 'ARB',
+    tokenIn: '0x0000000000000000000000000000000000000b7c',
+    tokenOut: '0x00000000000000000000000000000000000000ad',
+    amountIn: '500000000000000',
+    amountOut: '225000000',
+  })
+  assert.equal(stored.data.postClaimCalls.length, 2)
 })
 
 test('converts BTC-like EVM amounts to sats with upward rounding', () => {

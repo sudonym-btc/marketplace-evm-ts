@@ -18,6 +18,7 @@ export type EvmEscrowPaymentValidationRequest = {
   assetAddress: EvmAddress
   paymentAmount: EvmAmount
   bondAmount?: EvmAmount
+  unlockAt?: bigint
   timeoutClaimantAddress?: EvmAddress
   escrowFee?: EvmAmount
   contextHash?: EvmHex
@@ -51,10 +52,11 @@ export type EvmEscrowPaymentValidationResult = {
   txHash: EvmHash
   chainId: number
   confirmations?: number
+  amount?: EvmAmount
   amountMatched?: boolean
   assetMatched?: boolean
   recipientMatched?: boolean
-  escrowMatched?: boolean
+  arbiterMatched?: boolean
   funding?: EvmEscrowFundingLog
   error?: string
 }

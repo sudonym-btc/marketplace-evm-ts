@@ -10,8 +10,12 @@ import type {
   BoltzSubmarineSwapRequest,
   BoltzSubmarineSwapResponse,
   BoltzPairTable,
+  BoltzDexQuote,
+  BoltzDexQuoteRequest,
+  BoltzDexEncodeRequest,
 } from './types.js'
 import type { paths } from './openapi.generated.js'
+import type { EvmHex } from '../types.js'
 
 export type BoltzRestClientOptions = {
   apiUrl: string
@@ -57,6 +61,22 @@ function readData<T>(result: { data?: T; error?: unknown; response: Response }):
   return result.data
 }
 
+function firstQuote(quotes: Array<{ quote: string; data: Record<string, unknown> }>, label: string): {
+  quote: bigint
+  data: Record<string, unknown>
+} {
+  const quote = quotes[0]
+  if (!quote) throw new Error(`No Boltz DEX quote available for ${label}`)
+  return {
+    quote: BigInt(quote.quote),
+    data: quote.data,
+  }
+}
+
+function prefixedHex(value: string): EvmHex {
+  return (value.startsWith('0x') ? value : `0x${value}`) as EvmHex
+}
+
 export function createBoltzRestClient(options: BoltzRestClientOptions): BoltzClient {
   const fetchImpl = options.fetch ?? globalThis.fetch
   const client = createOpenApiClient<paths>({
@@ -95,6 +115,69 @@ export function createBoltzRestClient(options: BoltzRestClientOptions): BoltzCli
           body: request,
         }),
       ) as BoltzSubmarineSwapResponse
+    },
+
+    async quoteTokenAmountIn(currency: string, request: BoltzDexQuoteRequest): Promise<BoltzDexQuote> {
+      const quotes = readData(
+        await client.GET('/quote/{currency}/in', {
+          params: {
+            path: { currency },
+            query: {
+              tokenIn: request.tokenIn,
+              tokenOut: request.tokenOut,
+              amountIn: request.amount.toString(),
+            },
+          },
+        }),
+      ) as Array<{ quote: string; data: Record<string, unknown> }>
+      const quote = firstQuote(quotes, `${request.tokenIn}->${request.tokenOut}`)
+      return {
+        amountIn: request.amount,
+        amountOut: quote.quote,
+        data: quote.data,
+      }
+    },
+
+    async quoteTokenAmountOut(currency: string, request: BoltzDexQuoteRequest): Promise<BoltzDexQuote> {
+      const quotes = readData(
+        await client.GET('/quote/{currency}/out', {
+          params: {
+            path: { currency },
+            query: {
+              tokenIn: request.tokenIn,
+              tokenOut: request.tokenOut,
+              amountOut: request.amount.toString(),
+            },
+          },
+        }),
+      ) as Array<{ quote: string; data: Record<string, unknown> }>
+      const quote = firstQuote(quotes, `${request.tokenIn}->${request.tokenOut}`)
+      return {
+        amountIn: quote.quote,
+        amountOut: request.amount,
+        data: quote.data,
+      }
+    },
+
+    async encodeTokenSwap(currency: string, request: BoltzDexEncodeRequest) {
+      const encoded = readData(
+        await client.POST('/quote/{currency}/encode', {
+          params: { path: { currency } },
+          body: {
+            recipient: request.recipient,
+            amountIn: request.amountIn.toString(),
+            amountOutMin: request.amountOutMin.toString(),
+            data: request.data,
+          },
+        }),
+      ) as { calls: Array<{ to: string; value?: string; data: string }> }
+
+      return encoded.calls.map((call, index) => ({
+        name: `DEX.${index}`,
+        to: call.to as `0x${string}`,
+        value: BigInt(call.value ?? '0'),
+        data: prefixedHex(call.data),
+      }))
     },
 
     async getSwap(id: string): Promise<BoltzStatusUpdate> {

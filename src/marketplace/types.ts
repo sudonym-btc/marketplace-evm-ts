@@ -14,14 +14,17 @@ import type {
   MarketplaceDriverRecoveryState,
   MarketplaceDriverStartContext,
   MarketplaceDriverStartResult,
+  MarketplaceDriverValidationExpected,
   MarketplaceDriverValidationRequest,
   MarketplaceDriverValidationResult,
   MarketplaceDriverWatermarkContext,
   MarketplaceDriverWatermarkDiscovery,
+  MarketplaceDriverLogger,
 } from '@sudonym-btc/marketplace-driver-interface'
 import type {
   EvmAddress,
   EvmAmount,
+  EvmBoltzRouteVia,
   EvmChainConfig,
   EvmHex,
   EvmOperationStore,
@@ -51,12 +54,14 @@ export type EvmPaymentPolicy = EvmEscrowPaymentPolicy | EvmAuctionPaymentPolicy
 export type EvmPaymentAsset = {
   method: 'evm'
   assetId: string
+  currency?: string
   denomination: string
   decimals: number
   appId: string
   chainId: number
   assetAddress: EvmAddress
   boltzCurrency?: string
+  boltzRouteVia?: EvmBoltzRouteVia
 }
 
 export type EvmMarketplaceChainConfig = EvmChainConfig & {
@@ -79,6 +84,7 @@ export type EvmMarketplacePolicyOptions = {
   chains: EvmMarketplaceChainConfig[]
   operationStore: EvmOperationStore
   appId?: string
+  logger?: MarketplaceDriverLogger
 }
 
 export type GenericAmount = MarketplaceDriverAmount
@@ -86,17 +92,17 @@ export type GenericPaymentIdentity = MarketplaceDriverIdentity
 export type GenericPaymentIntent = MarketplaceDriverPaymentIntent
 export type GenericPaymentProof = MarketplaceDriverPaymentProof
 export type GenericPaymentValidationRequest = MarketplaceDriverValidationRequest
-export type GenericPaymentValidationResult = MarketplaceDriverValidationResult & { method: 'evm' }
+export type GenericPaymentValidationResult = MarketplaceDriverValidationResult & { driver: 'evm' }
 export type GenericBolt11PaymentRequest = MarketplaceDriverBolt11PaymentRequest
 export type GenericPolicyPaymentState = MarketplaceDriverPaymentState<GenericPaymentProof>
 export type GenericPaymentRecoveryItem = MarketplaceDriverRecoveryItem<
   GenericPaymentProof,
-  GenericPaymentValidationRequest['expected']
+  MarketplaceDriverValidationExpected
 >
 export type GenericPaymentRecoveryState = Exclude<MarketplaceDriverRecoveryState<GenericPaymentProof>, { type: 'settlement_ready' }>
 export type GenericAuctionSettlementIntent = MarketplaceDriverAuctionSettlementIntent<
   GenericPaymentProof,
-  GenericPaymentValidationRequest['expected']
+  MarketplaceDriverValidationExpected
 >
 export type GenericAuctionSettlementResult = MarketplaceDriverAuctionSettlementResult<GenericPaymentProof>
 
@@ -190,12 +196,13 @@ export type EvmPayRequest = {
   intent: GenericPaymentIntent
   state: EvmMarketplacePolicyState
   setState(state: EvmMarketplacePolicyState): void
+  logger?: MarketplaceDriverLogger
 }
 
 export type EvmResolvedPaymentIntent = {
   tradeId: string
   settlementId: string
-  subject: 'order' | 'bid'
+  purpose: 'order' | 'bid'
   accountIndex: number
   seed: string
   chain: ResolvedEvmMarketplaceChainConfig

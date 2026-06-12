@@ -19,6 +19,15 @@ the plain request types exported by this package.
 - Derive per-trade AA owner accounts from a caller-provided marketplace seed.
 - Report deterministic usage watermarks for marketplace parent index recovery.
 
+Marketplace validation is self-contained at the payment proof layer. EVM proof
+params carry the transaction hash, chain id, trade id, parties, asset,
+`paymentAmount`, optional `bondAmount`, optional `escrowFee`, `unlockAt`,
+timeout claimant, and context hashes. The validator resolves encrypted params
+through the shared driver `decryptParams` hook when needed, then verifies the
+transaction receipt and decoded `TradeCreated` log. Contract address and
+bytecode hash are optional proof params; when the address is omitted, the
+configured chain `multiEscrowAddress` is used.
+
 ## Non-Responsibilities
 
 - Nostr relay access.

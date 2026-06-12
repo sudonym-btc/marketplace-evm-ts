@@ -115,7 +115,10 @@ export function deriveEvmTradeRoot(seed: string, context: EvmTradeDerivationCont
 }
 
 export function deriveEvmTradeId(seed: string, context: EvmTradeDerivationContext): Hex {
-  return deriveNode(deriveEvmTradeRoot(seed, context), { purpose: 'trade-id' })
+  return deriveNode(normalizeEvmSeed(seed), {
+    purpose: 'trade-id',
+    tradeIndex: assertIndex(context.tradeIndex, 'EVM trade index'),
+  })
 }
 
 export function deriveEvmRoot(seed: string, context: EvmTradeDerivationContext): Hex {

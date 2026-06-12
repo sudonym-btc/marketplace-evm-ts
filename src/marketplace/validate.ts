@@ -1,9 +1,9 @@
 import { encodeAbiParameters, keccak256, toHex } from 'viem'
+import { resolveMarketplaceDriverPaymentProofParams } from '@sudonym-btc/marketplace-driver-interface'
 
 import { createEvmEscrowValidator } from '../validation/escrowPaymentValidator.js'
 import type { EvmAddress, EvmAmount, EvmHash, EvmHex } from '../types.js'
 import type {
-  GenericAmount,
   GenericPaymentValidationRequest,
   GenericPaymentValidationResult,
   ResolvedEvmMarketplaceChainConfig,
@@ -44,20 +44,76 @@ function txHash(value: unknown): EvmHash {
   return raw as EvmHash
 }
 
-function amount(
-  preferred: GenericAmount | undefined,
-  params: Record<string, unknown>,
-  valueKey: string,
-  label: string,
-): EvmAmount {
-  const value = preferred?.value ?? stringValue(params[valueKey], label)
-  const denomination = preferred?.denomination ?? optionalString(params.denomination) ?? ''
-  const decimals = preferred?.decimals ?? numberValue(params.decimals, 'decimals')
+function amount(params: Record<string, unknown>, valueKey: string, label: string): EvmAmount {
+  const value = stringValue(params[valueKey], label)
+  const currency = optionalString(params.currency)
+  const denomination = optionalString(params.denomination) ?? ''
+  const decimals = numberValue(params.decimals, 'decimals')
   return {
     value: BigInt(value),
+    ...(currency ? { currency } : {}),
     denomination,
     decimals,
   }
+}
+
+function optionalAmount(params: Record<string, unknown>, valueKey: string, label: string): EvmAmount | undefined {
+  if (params[valueKey] === undefined || params[valueKey] === null) return undefined
+  return amount(params, valueKey, label)
+}
+
+function paymentAmount(params: Record<string, unknown>): EvmAmount {
+  return amount(params, params.paymentAmount !== undefined ? 'paymentAmount' : 'value', 'payment amount')
+}
+
+function marketplaceAmount(value: bigint, unit: Pick<EvmAmount, 'currency' | 'denomination' | 'decimals'>): {
+  value: string
+  currency?: string
+  denomination: string
+  decimals: number
+} {
+  return {
+    value: value.toString(),
+    ...(unit.currency ? { currency: unit.currency } : {}),
+    denomination: unit.denomination,
+    decimals: unit.decimals,
+  }
+}
+
+function canonicalCurrency(value: string | undefined): string {
+  const normalized = (value ?? '').toUpperCase()
+  if (normalized === 'SAT' || normalized === 'SATS' || normalized === 'XBT') return 'BTC'
+  if (normalized === 'USDT' || normalized === 'USDC') return 'USD'
+  return normalized
+}
+
+function amountCurrency(amount: Pick<EvmAmount, 'currency' | 'denomination'>): string {
+  return canonicalCurrency(amount.currency ?? amount.denomination)
+}
+
+function scaleAmountValue(value: bigint, fromDecimals: number, toDecimals: number): bigint {
+  if (fromDecimals === toDecimals) return value
+  if (fromDecimals < toDecimals) return value * 10n ** BigInt(toDecimals - fromDecimals)
+  const scale = 10n ** BigInt(fromDecimals - toDecimals)
+  if (value % scale !== 0n) throw new Error(`EVM amount ${value.toString()} cannot be converted from ${fromDecimals} to ${toDecimals} decimals`)
+  return value / scale
+}
+
+function resultAmount(
+  value: bigint,
+  unit: EvmAmount,
+  expected: GenericPaymentValidationRequest['expected'] | undefined,
+): ReturnType<typeof marketplaceAmount> {
+  const expectedAmount = expected?.amount
+  if (expectedAmount && amountCurrency(unit) === amountCurrency(expectedAmount)) {
+    return {
+      value: scaleAmountValue(value, unit.decimals, expectedAmount.decimals).toString(),
+      ...(expectedAmount.currency ? { currency: expectedAmount.currency } : { currency: amountCurrency(expectedAmount) }),
+      denomination: expectedAmount.denomination,
+      decimals: expectedAmount.decimals,
+    }
+  }
+  return marketplaceAmount(value, unit)
 }
 
 function objectValue(value: unknown, label: string): Record<string, unknown> {
@@ -73,6 +129,10 @@ function bigintString(value: unknown, label: string): bigint {
 
 function sameAddress(left: EvmAddress, right: EvmAddress): boolean {
   return left.toLowerCase() === right.toLowerCase()
+}
+
+function isEvmProofDriver(driver: string): boolean {
+  return driver === 'evm' || driver.startsWith('evm:')
 }
 
 function recycleCovenantHash(input: {
@@ -115,7 +175,7 @@ function recycleCovenantHash(input: {
 }
 
 function validateBidRecycleArgs(params: Record<string, unknown>): string | undefined {
-  if (params.subject !== 'bid') return undefined
+  if (params.recycleArgs === undefined || params.recycleArgs === null) return undefined
   let target: Record<string, unknown>
   try {
     const args = objectValue(params.recycleArgs, 'recycleArgs')
@@ -183,60 +243,108 @@ export async function validateEvmMarketplacePayment(
   chains: ResolvedEvmMarketplaceChainConfig[],
   request: GenericPaymentValidationRequest,
 ): Promise<GenericPaymentValidationResult> {
-  if (request.method !== 'evm' || request.proof.method !== 'evm') {
+  if (!isEvmProofDriver(request.proof.driver)) {
     return {
-      method: 'evm',
+      driver: 'evm',
       status: 'unverifiable',
-      error: `EVM validator cannot validate ${request.method}`,
+      error: `EVM validator cannot validate ${request.proof.driver}`,
     }
   }
 
   try {
-    const params = request.proof.params
+    const params = await resolveMarketplaceDriverPaymentProofParams(request.proof, request.decryptParams)
     const recycleArgsError = validateBidRecycleArgs(params)
     if (recycleArgsError) {
-      return { method: 'evm', status: 'invalid', error: recycleArgsError }
+      return { driver: 'evm', status: 'invalid', error: recycleArgsError }
     }
-    const expected = request.expected
+    const chainId = typeof params.chainId === 'number' && Number.isSafeInteger(params.chainId)
+      ? params.chainId
+      : numberValue(request.expected?.contract?.chainId, 'chainId')
+    const chain = chains.find(candidate => candidate.chainId === chainId)
+    const contractAddress = address(params.contractAddress ?? chain?.multiEscrowAddress, 'contractAddress')
     const validator = createEvmEscrowValidator({ chains })
+    const expectedPaymentAmount = paymentAmount(params)
+    const bondAmount = optionalAmount(params, 'bondAmount', 'bond amount')
+    const escrowFee = optionalAmount(params, 'escrowFee', 'escrow fee')
     const result = await validator.validate({
-      chainId: expected.contract?.chainId ?? numberValue(params.chainId, 'chainId'),
+      chainId,
       txHash: txHash(params.txHash),
-      tradeId: expected.settlementId,
-      contractAddress: address(expected.contract?.address ?? params.contractAddress, 'contractAddress'),
-      ...(expected.contract?.bytecodeHash ?? params.contractBytecodeHash
-        ? { contractBytecodeHash: hash(expected.contract?.bytecodeHash ?? params.contractBytecodeHash, 'contractBytecodeHash') }
+      tradeId: stringValue(params.tradeId ?? request.expected?.settlementId, 'tradeId'),
+      contractAddress,
+      ...(params.contractBytecodeHash
+        ? { contractBytecodeHash: hash(params.contractBytecodeHash, 'contractBytecodeHash') }
         : {}),
-      sellerAddress: address(expected.participants?.seller?.address ?? params.sellerAddress, 'sellerAddress'),
-      arbiterAddress: address(expected.participants?.escrow?.address ?? params.arbiterAddress, 'arbiterAddress'),
+      sellerAddress: address(params.sellerAddress, 'sellerAddress'),
+      arbiterAddress: address(params.arbiterAddress, 'arbiterAddress'),
       assetAddress: address(params.assetAddress, 'assetAddress'),
-      paymentAmount: amount(expected.amount, params, 'value', 'payment amount'),
+      paymentAmount: expectedPaymentAmount,
+      ...(bondAmount ? { bondAmount } : {}),
+      ...(params.unlockAt !== undefined ? { unlockAt: bigintString(params.unlockAt, 'unlockAt') } : {}),
       ...(params.timeoutClaimantAddress
         ? { timeoutClaimantAddress: address(params.timeoutClaimantAddress, 'timeoutClaimantAddress') }
         : {}),
-      ...(expected.fee || params.escrowFee
-        ? { escrowFee: amount(expected.fee, params, 'escrowFee', 'escrow fee') }
-        : {}),
+      ...(escrowFee ? { escrowFee } : {}),
       ...(params.contextHash ? { contextHash: hash(params.contextHash, 'contextHash') } : {}),
       ...(params.recycleCovenantHash
         ? { recycleCovenantHash: hash(params.recycleCovenantHash, 'recycleCovenantHash') }
         : {}),
       minConfirmations: 1,
     })
+    const paymentResultAmount = resultAmount(expectedPaymentAmount.value, expectedPaymentAmount, request.expected)
+    const fundedResultAmount = result.funding
+      ? resultAmount(result.funding.paymentAmount + result.funding.bondAmount, expectedPaymentAmount, request.expected)
+      : undefined
+    const securityBondResultAmount = result.funding
+      ? resultAmount(result.funding.bondAmount, expectedPaymentAmount, request.expected)
+      : undefined
+    const escrowFeeResultAmount = result.funding
+      ? resultAmount(result.funding.escrowFee, expectedPaymentAmount, request.expected)
+      : undefined
     return {
-      method: 'evm',
+      driver: 'evm',
       status: result.status,
+      ...(result.status === 'valid'
+        ? {
+            amount: paymentResultAmount,
+          }
+        : {}),
       ...(result.confirmations !== undefined ? { confirmations: result.confirmations } : {}),
       ...(result.amountMatched !== undefined ? { amountMatched: result.amountMatched } : {}),
       ...(result.assetMatched !== undefined ? { assetMatched: result.assetMatched } : {}),
       ...(result.recipientMatched !== undefined ? { recipientMatched: result.recipientMatched } : {}),
-      ...(result.escrowMatched !== undefined ? { escrowMatched: result.escrowMatched } : {}),
+      ...(result.arbiterMatched !== undefined ? { arbiterMatched: result.arbiterMatched } : {}),
       ...(result.funding
         ? {
+            terms: {
+              settlementId: result.funding.tradeId,
+              paymentAmount: resultAmount(result.funding.paymentAmount, expectedPaymentAmount, request.expected),
+              fundedAmount: fundedResultAmount!,
+              securityBondAmount: securityBondResultAmount!,
+              escrowFee: escrowFeeResultAmount!,
+              unlockAt: Number(result.funding.unlockAt),
+              timeoutClaimant: result.funding.timeoutClaimantAddress,
+              asset: {
+                currency: amountCurrency(expectedPaymentAmount),
+                denomination: expectedPaymentAmount.denomination,
+                decimals: expectedPaymentAmount.decimals,
+                chainId: result.funding.chainId,
+                assetId: result.funding.assetAddress,
+              },
+              participants: {
+                buyer: { address: result.funding.buyerAddress },
+                seller: { address: result.funding.sellerAddress },
+                arbiter: { address: result.funding.arbiterAddress },
+              },
+            },
             data: {
               txHash: result.funding.txHash,
               chainId: result.funding.chainId,
               settlementId: result.funding.tradeId,
+              paymentAmount: result.funding.paymentAmount.toString(),
+              fundedAmount: (result.funding.paymentAmount + result.funding.bondAmount).toString(),
+              securityBondAmount: result.funding.bondAmount.toString(),
+              escrowFee: result.funding.escrowFee.toString(),
+              unlockAt: result.funding.unlockAt.toString(),
               buyerAddress: result.funding.buyerAddress,
               sellerAddress: result.funding.sellerAddress,
               arbiterAddress: result.funding.arbiterAddress,
@@ -251,7 +359,7 @@ export async function validateEvmMarketplacePayment(
     }
   } catch (error) {
     return {
-      method: 'evm',
+      driver: 'evm',
       status: 'unverifiable',
       error: error instanceof Error ? error.message : 'Unable to validate EVM payment',
     }

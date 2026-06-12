@@ -129,6 +129,8 @@ async function createAndArbitrateEscrowTrade(symbol, paymentValue, bondValue) {
   const tradeId = randomTradeId()
   const paymentAmount = amount(paymentValue, asset)
   const bondAmount = amount(bondValue, asset)
+  const sellerBalanceBefore = await escrowBalance(publicClient, arbitrum.multiEscrow.address, sellerAddress, asset.address)
+  const buyerBalanceBefore = await escrowBalance(publicClient, arbitrum.multiEscrow.address, buyerAccount.address, asset.address)
 
   const calls = evm.escrow.createTrade({
     tradeId,
@@ -156,8 +158,10 @@ async function createAndArbitrateEscrowTrade(symbol, paymentValue, bondValue) {
 
   const expectedSeller = paymentValue * paymentFactor / 1000n + bondValue * bondFactor / 1000n
   const expectedBuyer = paymentValue + bondValue - expectedSeller
-  assert.equal(await escrowBalance(publicClient, arbitrum.multiEscrow.address, sellerAddress, asset.address), expectedSeller)
-  assert.equal(await escrowBalance(publicClient, arbitrum.multiEscrow.address, buyerAccount.address, asset.address), expectedBuyer)
+  const sellerBalanceAfter = await escrowBalance(publicClient, arbitrum.multiEscrow.address, sellerAddress, asset.address)
+  const buyerBalanceAfter = await escrowBalance(publicClient, arbitrum.multiEscrow.address, buyerAccount.address, asset.address)
+  assert.equal(sellerBalanceAfter - sellerBalanceBefore, expectedSeller)
+  assert.equal(buyerBalanceAfter - buyerBalanceBefore, expectedBuyer)
   const trade = await readTrade(publicClient, arbitrum.multiEscrow.address, tradeId)
   assert.equal(trade[0].toLowerCase(), '0x0000000000000000000000000000000000000000')
 }
@@ -242,7 +246,7 @@ async function placeValidateAndPromoteAuctionBid(symbol, bidValue) {
   assert.equal(validation.status, 'valid')
   assert.equal(validation.assetMatched, true)
   assert.equal(validation.recipientMatched, true)
-  assert.equal(validation.escrowMatched, true)
+  assert.equal(validation.arbiterMatched, true)
   assert.equal(validation.bid?.bidAmount, bidValue)
   assert.equal(validation.bid?.fundedAmount, paymentAmount.value)
   assert.equal(validation.bid?.timeoutClaimantAddress.toLowerCase(), buyerAccount.address.toLowerCase())
@@ -297,7 +301,7 @@ test('validates a USDT escrow deposit against MultiEscrow', stackTestOptions, as
   assert.equal(result.status, 'valid')
   assert.equal(result.assetMatched, true)
   assert.equal(result.recipientMatched, true)
-  assert.equal(result.escrowMatched, true)
+  assert.equal(result.arbiterMatched, true)
 })
 
 test('validates a tBTC escrow deposit against MultiEscrow', stackTestOptions, async () => {
@@ -305,7 +309,7 @@ test('validates a tBTC escrow deposit against MultiEscrow', stackTestOptions, as
   assert.equal(result.status, 'valid')
   assert.equal(result.assetMatched, true)
   assert.equal(result.recipientMatched, true)
-  assert.equal(result.escrowMatched, true)
+  assert.equal(result.arbiterMatched, true)
 })
 
 test('arbitrates a USDT escrow deposit against MultiEscrow', stackTestOptions, async () => {
@@ -321,7 +325,7 @@ test('places, validates, and promotes a USDT auction bid against MultiEscrow', s
   assert.equal(result.status, 'valid')
   assert.equal(result.assetMatched, true)
   assert.equal(result.recipientMatched, true)
-  assert.equal(result.escrowMatched, true)
+  assert.equal(result.arbiterMatched, true)
 })
 
 test('places, validates, and promotes a tBTC auction bid against MultiEscrow', stackTestOptions, async () => {
@@ -329,5 +333,5 @@ test('places, validates, and promotes a tBTC auction bid against MultiEscrow', s
   assert.equal(result.status, 'valid')
   assert.equal(result.assetMatched, true)
   assert.equal(result.recipientMatched, true)
-  assert.equal(result.escrowMatched, true)
+  assert.equal(result.arbiterMatched, true)
 })

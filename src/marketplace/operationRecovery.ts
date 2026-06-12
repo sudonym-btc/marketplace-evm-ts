@@ -94,10 +94,12 @@ export async function recoverActiveEvmSwapOperations(options: {
       const attemptIndex = recordValue<number>(requestData, 'attemptIndex')
       const chainId = recordValue<number>(requestData, 'chainId')
       const assetAddress = recordValue<EvmAddress>(requestData, 'assetAddress')
+      const recordedClaimAssetAddress = recordValue<EvmAddress>(latest.operation.data, 'claimAssetAddress')
       const postClaimCalls = recordValue<unknown[]>(latest.operation.data, 'postClaimCalls') ?? []
       if (tradeIndex === undefined || attemptIndex === undefined || chainId === undefined || !assetAddress) {
         throw new Error(`Operation ${operation.id} is missing swap-in recovery data`)
       }
+      const claimAssetAddress = recordedClaimAssetAddress ?? assetAddress
 
       const chain = options.chains.find(item => item.chainId === chainId)
       if (!chain) throw new Error(`No configured EVM chain ${chainId}`)
@@ -119,7 +121,7 @@ export async function recoverActiveEvmSwapOperations(options: {
         transactionHash: txHash as EvmHash,
         preimageHash: material.preimageHash,
         claimAddress: buyerAddress,
-        tokenAddress: assetAddress,
+        tokenAddress: claimAssetAddress,
       })
       const execution = await evmForTrade.executor.execute(
         [
