@@ -22,7 +22,7 @@ function settlementProof(
 ): GenericAuctionSettlementResult {
   return {
     proof: {
-      driver: 'evm',
+      ...intent.proof,
       params,
     },
     data: {
@@ -44,6 +44,7 @@ class EvmAuctionPolicyImpl
   constructor(options: EvmMarketplacePolicyOptions) {
     super(options, {
       id: 'evm:multi-escrow-auction-v1',
+      label: 'EVM auction',
       purpose: 'bid',
       family: 'auction',
       enabled: evmAuctionPolicies(options.chains).length > 0,

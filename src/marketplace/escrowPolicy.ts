@@ -17,6 +17,7 @@ class EvmEscrowPolicyImpl
   constructor(options: EvmMarketplacePolicyOptions) {
     super(options, {
       id: 'evm:multi-escrow',
+      label: 'EVM escrow',
       purpose: 'order',
       family: 'escrow',
       enabled: true,

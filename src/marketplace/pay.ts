@@ -11,6 +11,7 @@ import type {
   GenericPolicyPaymentState,
   GenericPaymentProof,
 } from './types.js'
+import type { MarketplaceDriverPaymentTerms, MarketplaceDriverPaymentTermAmount } from '@sudonym-btc/marketplace-driver-interface'
 import type { EvmBoltzRouteVia, EvmHash, EvmHex } from '../types.js'
 import type { SwapInRequest } from '../swaps/types.js'
 
@@ -36,6 +37,102 @@ function boltzQuoteCurrency(intent: EvmResolvedPaymentIntent): string | undefine
 
 function sameBoltzCurrency(value: string | undefined, expected: string): boolean {
   return value?.toUpperCase() === expected.toUpperCase()
+}
+
+function termAmount(options: {
+  value: bigint
+  currency?: string
+  denomination: string
+  decimals: number
+  assetId: string
+}): MarketplaceDriverPaymentTermAmount {
+  return {
+    value: options.value.toString(),
+    ...(options.currency ? { currency: options.currency } : {}),
+    denomination: options.denomination,
+    decimals: options.decimals,
+    assetId: options.assetId,
+  }
+}
+
+function evmPaymentTerms(options: {
+  policyId: string
+  policyType: string
+  chainId: number
+  contractAddress: `0x${string}`
+  tradeId: string
+  buyerAddress: `0x${string}`
+  sellerAddress: `0x${string}`
+  arbiterAddress: `0x${string}`
+  assetAddress: `0x${string}`
+  value: bigint
+  bondAmount: bigint
+  currency?: string
+  denomination: string
+  decimals: number
+  escrowFee: bigint
+  fundedValue: bigint
+  unlockAt: bigint
+  timeoutClaimantAddress: `0x${string}`
+  contextHash: EvmHex
+  recycleCovenantHash: EvmHex
+}): MarketplaceDriverPaymentTerms {
+  const assetId = `${options.chainId}:${options.assetAddress.toLowerCase()}`
+  const paymentAmount = termAmount({
+    value: options.value,
+    ...(options.currency ? { currency: options.currency } : {}),
+    denomination: options.denomination,
+    decimals: options.decimals,
+    assetId,
+  })
+  const fundedAmount = termAmount({
+    value: options.fundedValue,
+    ...(options.currency ? { currency: options.currency } : {}),
+    denomination: options.denomination,
+    decimals: options.decimals,
+    assetId,
+  })
+  const escrowFee = termAmount({
+    value: options.escrowFee,
+    ...(options.currency ? { currency: options.currency } : {}),
+    denomination: options.denomination,
+    decimals: options.decimals,
+    assetId,
+  })
+  return {
+    version: 1,
+    asset: paymentAmount,
+    parties: [
+      { role: 'buyer', id: options.buyerAddress },
+      { role: 'seller', id: options.sellerAddress },
+      { role: 'arbiter', id: options.arbiterAddress },
+    ],
+    lock: {
+      id: options.tradeId,
+      policyId: options.policyId,
+      kind: 'contract',
+      amount: fundedAmount,
+      controls: [
+        { role: 'buyer', id: options.buyerAddress },
+        { role: 'seller', id: options.sellerAddress },
+        { role: 'arbiter', id: options.arbiterAddress },
+      ],
+      conditions: {
+        policyType: options.policyType,
+        chainId: options.chainId,
+        contractAddress: options.contractAddress,
+        contextHash: options.contextHash,
+        recycleCovenantHash: options.recycleCovenantHash,
+        timeoutClaimantAddress: options.timeoutClaimantAddress,
+        unlockAt: options.unlockAt.toString(),
+        escrowFee,
+        arbitration: {
+          type: 'continuous',
+          denominator: '1000000',
+        },
+      },
+    },
+  }
 }
 
 function defaultRouteVia(intent: EvmResolvedPaymentIntent): EvmBoltzRouteVia | undefined {
@@ -119,8 +216,10 @@ function paymentProof(options: {
   recycleCovenantHash: EvmHex
   recycleArgs?: EvmRecycleArgs
 }): GenericPaymentProof {
+  const terms = evmPaymentTerms(options)
   return {
     driver: 'evm',
+    terms,
     params: {
       txHash: options.txHash,
       policyId: options.policyId,

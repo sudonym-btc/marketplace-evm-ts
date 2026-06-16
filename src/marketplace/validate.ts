@@ -1,5 +1,9 @@
 import { encodeAbiParameters, keccak256, toHex } from 'viem'
-import { resolveMarketplaceDriverPaymentProofParams } from '@sudonym-btc/marketplace-driver-interface'
+import {
+  resolveMarketplaceDriverPaymentProofParams,
+  type MarketplaceDriverPaymentTerms,
+  type MarketplaceDriverPaymentTermAmount,
+} from '@sudonym-btc/marketplace-driver-interface'
 
 import { createEvmEscrowValidator } from '../validation/escrowPaymentValidator.js'
 import type { EvmAddress, EvmAmount, EvmHash, EvmHex } from '../types.js'
@@ -135,6 +139,105 @@ function isEvmProofDriver(driver: string): boolean {
   return driver === 'evm' || driver.startsWith('evm:')
 }
 
+function sortedJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(sortedJson).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map(key => `${JSON.stringify(key)}:${sortedJson((value as Record<string, unknown>)[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+function termAmount(options: {
+  value: bigint
+  currency?: string
+  denomination: string
+  decimals: number
+  assetId: string
+}): MarketplaceDriverPaymentTermAmount {
+  return {
+    value: options.value.toString(),
+    ...(options.currency ? { currency: options.currency } : {}),
+    denomination: options.denomination,
+    decimals: options.decimals,
+    assetId: options.assetId,
+  }
+}
+
+function expectedEvmTerms(params: Record<string, unknown>): MarketplaceDriverPaymentTerms {
+  const chainId = numberValue(params.chainId, 'chainId')
+  const assetAddress = address(params.assetAddress, 'assetAddress')
+  const assetId = `${chainId}:${assetAddress.toLowerCase()}`
+  const currency = optionalString(params.currency)
+  const denomination = optionalString(params.denomination) ?? ''
+  const decimals = numberValue(params.decimals, 'decimals')
+  const amountUnit = { ...(currency ? { currency } : {}), denomination, decimals, assetId }
+  const payment = termAmount({
+    value: bigintString(params.paymentAmount ?? params.value, 'payment amount'),
+    ...amountUnit,
+  })
+  const funded = termAmount({
+    value: bigintString(params.fundedValue ?? params.value, 'funded amount'),
+    ...amountUnit,
+  })
+  const fee = termAmount({
+    value: bigintString(params.escrowFee ?? '0', 'escrow fee'),
+    ...amountUnit,
+  })
+  const buyerAddress = address(params.buyerAddress, 'buyerAddress')
+  const sellerAddress = address(params.sellerAddress, 'sellerAddress')
+  const arbiterAddress = address(params.arbiterAddress, 'arbiterAddress')
+  const policyId = stringValue(params.policyId, 'policyId')
+  const policyType = stringValue(params.policyType, 'policyType')
+  const contractAddress = address(params.contractAddress, 'contractAddress')
+  const tradeId = stringValue(params.tradeId, 'tradeId')
+  return {
+    version: 1,
+    asset: payment,
+    parties: [
+      { role: 'buyer', id: buyerAddress },
+      { role: 'seller', id: sellerAddress },
+      { role: 'arbiter', id: arbiterAddress },
+    ],
+    lock: {
+      id: tradeId,
+      policyId,
+      kind: 'contract',
+      amount: funded,
+      controls: [
+        { role: 'buyer', id: buyerAddress },
+        { role: 'seller', id: sellerAddress },
+        { role: 'arbiter', id: arbiterAddress },
+      ],
+      conditions: {
+        policyType,
+        chainId,
+        contractAddress,
+        contextHash: hash(params.contextHash, 'contextHash'),
+        recycleCovenantHash: hash(params.recycleCovenantHash, 'recycleCovenantHash'),
+        timeoutClaimantAddress: address(params.timeoutClaimantAddress, 'timeoutClaimantAddress'),
+        unlockAt: stringValue(params.unlockAt, 'unlockAt'),
+        escrowFee: fee,
+        arbitration: {
+          type: 'continuous',
+          denominator: '1000000',
+        },
+      },
+    },
+  }
+}
+
+function validateEvmPaymentTerms(request: GenericPaymentValidationRequest, params: Record<string, unknown>): string | undefined {
+  if (!request.proof.terms) return 'EVM payment proof is missing public payment terms'
+  const expected = expectedEvmTerms(params)
+  if (sortedJson(request.proof.terms) !== sortedJson(expected)) {
+    return 'EVM payment public terms do not match proof evidence'
+  }
+  return undefined
+}
+
 function recycleCovenantHash(input: {
   buyerAddress: EvmAddress
   sellerAddress: EvmAddress
@@ -253,6 +356,8 @@ export async function validateEvmMarketplacePayment(
 
   try {
     const params = await resolveMarketplaceDriverPaymentProofParams(request.proof, request.decryptParams)
+    const termsError = validateEvmPaymentTerms(request, params)
+    if (termsError) return { driver: 'evm', status: 'invalid', error: termsError }
     const recycleArgsError = validateBidRecycleArgs(params)
     if (recycleArgsError) {
       return { driver: 'evm', status: 'invalid', error: recycleArgsError }

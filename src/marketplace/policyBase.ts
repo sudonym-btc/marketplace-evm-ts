@@ -12,11 +12,15 @@ import type {
   EvmPaymentAsset,
   EvmPaymentPolicy,
   GenericPaymentIntent,
-  GenericPaymentRecoveryItem,
-  GenericPaymentRecoveryState,
+  GenericPaymentSettlementIntent,
+  GenericPaymentSettlementState,
+  GenericPaymentSweepInput,
+  GenericPaymentSweepState,
   GenericPaymentValidationRequest,
   GenericPaymentValidationResult,
   GenericPolicyPaymentState,
+  GenericSwapResumeContext,
+  GenericSwapResumeState,
   ResolvedEvmMarketplaceChainConfig,
 } from './types.js'
 
@@ -25,6 +29,7 @@ type EvmPolicyBaseFamily = 'escrow' | 'auction'
 
 type EvmPolicyBaseConfig<Id extends string, Purpose extends EvmPolicyBasePurpose, Family extends EvmPolicyBaseFamily> = {
   id: Id
+  label: string
   purpose: Purpose
   family: Family
   enabled: boolean
@@ -46,8 +51,12 @@ export abstract class EvmMarketplacePolicyBase<
   GenericPaymentIntent,
   GenericPaymentValidationRequest,
   GenericPaymentValidationResult,
-  GenericPaymentRecoveryItem,
-  GenericPaymentRecoveryState,
+  GenericPaymentSweepInput,
+  GenericPaymentSweepState,
+  GenericPaymentSettlementIntent,
+  GenericPaymentSettlementState,
+  GenericSwapResumeContext,
+  GenericSwapResumeState,
   Purpose,
   Family
 > {
@@ -64,6 +73,7 @@ export abstract class EvmMarketplacePolicyBase<
     super({
       method: 'evm',
       id: config.id,
+      label: config.label,
       purpose: config.purpose,
       family: config.family,
       initialState: {
@@ -128,6 +138,27 @@ export abstract class EvmMarketplacePolicyBase<
   }
 
   async startup(context: Parameters<MarketplacePolicyBase<EvmMarketplacePolicyState>['startup']>[0]) {
+    this.patchState({
+      started: true,
+      maxUsedIndex: context.highWaterMark,
+      nextTradeIndex: context.nextUnusedIndex,
+      startSummary: 'Ready',
+    })
+    this.log('info', 'EVM policy startup complete', {
+      highWaterMark: context.highWaterMark,
+      nextUnusedIndex: context.nextUnusedIndex,
+    })
+    return {
+      policy: this.typedPolicyId,
+      data: {
+        ...this.startupData(),
+        highWaterMark: context.highWaterMark,
+        nextUnusedIndex: context.nextUnusedIndex,
+      },
+    }
+  }
+
+  async *resumeSwapOperations(context: GenericSwapResumeContext): AsyncIterable<GenericSwapResumeState> {
     const recovery = await recoverActiveEvmSwapOperations({
       chains: this.chains,
       operationStore: this.operationStore,
@@ -140,33 +171,30 @@ export abstract class EvmMarketplacePolicyBase<
       nextTradeIndex: context.nextUnusedIndex,
       startSummary: `${recovery.resumed} active EVM ${this.recoveryNoun} operation(s) resumed; ${recovery.settled.length} settled; ${recovery.failed.length} failed`,
     })
-    this.log('info', 'EVM policy startup complete', {
+    this.log('info', 'EVM swap operations resume complete', {
       activeOperations: recovery.activeOperations,
       resumed: recovery.resumed,
       settled: recovery.settled.length,
       failed: recovery.failed.length,
     })
-    return {
-      policy: this.typedPolicyId,
-      data: {
-        ...this.startupData(),
-        activeOperations: recovery.activeOperations,
-        resumed: recovery.resumed,
-        settled: recovery.settled.length,
-        failed: recovery.failed,
-      },
-    }
+    yield this.resumedSwapOperationsState({
+      ...this.startupData(),
+      activeOperations: recovery.activeOperations,
+      resumed: recovery.resumed,
+      settled: recovery.settled.length,
+      failed: recovery.failed,
+    })
   }
 
   protected startupData(): Record<string, unknown> {
     return {}
   }
 
-  async *recover(payment: GenericPaymentRecoveryItem): AsyncIterable<GenericPaymentRecoveryState> {
-    yield this.noOpRecoveryState({
+  async *sweepPayment(payment: GenericPaymentSweepInput): AsyncIterable<GenericPaymentSweepState> {
+    yield this.noOpSweepState({
       reason: this.recoveryReason,
-      purpose: payment.purpose,
       driver: payment.proof.driver,
+      paymentId: payment.paymentId,
     })
   }
 

@@ -35,9 +35,11 @@ export type {
   EvmResolvedPaymentIntent,
   GenericPaymentIntent,
   GenericPaymentProof,
-  GenericPaymentRecoveryItem,
-  GenericPaymentRecoveryState,
+  GenericPaymentSweepInput,
+  GenericPaymentSweepState,
   GenericPaymentValidationRequest,
   GenericPaymentValidationResult,
   GenericPolicyPaymentState,
+  GenericSwapResumeContext,
+  GenericSwapResumeState,
 } from '../marketplace/types.js'

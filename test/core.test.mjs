@@ -156,11 +156,16 @@ test('EVM escrow startup marks stale Boltz operations failed without aborting', 
     ],
   })
 
-  const result = await policy.startup({
+  const context = {
     seed: '7'.repeat(64),
     highWaterMark: 0,
     nextUnusedIndex: 1,
-  })
+  }
+  await policy.startup(context)
+
+  const states = []
+  for await (const state of policy.resumeSwapOperations(context)) states.push(state)
+  const result = states.at(-1)
 
   assert.equal(result.data.activeOperations, 1)
   assert.equal(result.data.resumed, 0)
@@ -223,11 +228,16 @@ test('EVM auction startup marks stale Boltz operations failed without aborting',
     ],
   })
 
-  const result = await policy.startup({
+  const context = {
     seed: '7'.repeat(64),
     highWaterMark: 0,
     nextUnusedIndex: 1,
-  })
+  }
+  await policy.startup(context)
+
+  const states = []
+  for await (const state of policy.resumeSwapOperations(context)) states.push(state)
+  const result = states.at(-1)
 
   assert.equal(result.data.activeOperations, 1)
   assert.equal(result.data.resumed, 0)
@@ -473,7 +483,7 @@ test('marketplace validation accepts typed evm proof drivers', async () => {
   }
 
   const typedResult = await policy.validatePayment(request)
-  assert.equal(typedResult.status, 'unverifiable')
+  assert.equal(typedResult.status, 'invalid')
   assert.notEqual(typedResult.error, 'EVM validator cannot validate evm:multi-escrow')
 
   const wrongDriverResult = await policy.validatePayment({

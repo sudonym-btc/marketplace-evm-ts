@@ -8,12 +8,16 @@ import type {
   MarketplaceDriverOrderPolicy,
   MarketplaceDriverIdentity,
   MarketplaceDriverPaymentIntent,
+  MarketplaceDriverPaymentSettlementIntent,
+  MarketplaceDriverPaymentSettlementState,
   MarketplaceDriverPaymentProof,
   MarketplaceDriverPaymentState,
-  MarketplaceDriverRecoveryItem,
-  MarketplaceDriverRecoveryState,
+  MarketplaceDriverPaymentSweepInput,
+  MarketplaceDriverPaymentSweepState,
   MarketplaceDriverStartContext,
   MarketplaceDriverStartResult,
+  MarketplaceDriverSwapResumeContext,
+  MarketplaceDriverSwapResumeState,
   MarketplaceDriverValidationExpected,
   MarketplaceDriverValidationRequest,
   MarketplaceDriverValidationResult,
@@ -95,11 +99,18 @@ export type GenericPaymentValidationRequest = MarketplaceDriverValidationRequest
 export type GenericPaymentValidationResult = MarketplaceDriverValidationResult & { driver: 'evm' }
 export type GenericBolt11PaymentRequest = MarketplaceDriverBolt11PaymentRequest
 export type GenericPolicyPaymentState = MarketplaceDriverPaymentState<GenericPaymentProof>
-export type GenericPaymentRecoveryItem = MarketplaceDriverRecoveryItem<
+export type GenericPaymentSweepInput = MarketplaceDriverPaymentSweepInput<
   GenericPaymentProof,
   MarketplaceDriverValidationExpected
 >
-export type GenericPaymentRecoveryState = Exclude<MarketplaceDriverRecoveryState<GenericPaymentProof>, { type: 'settlement_ready' }>
+export type GenericPaymentSweepState = MarketplaceDriverPaymentSweepState<GenericPaymentProof>
+export type GenericPaymentSettlementIntent = MarketplaceDriverPaymentSettlementIntent<
+  GenericPaymentProof,
+  MarketplaceDriverValidationExpected
+>
+export type GenericPaymentSettlementState = MarketplaceDriverPaymentSettlementState<GenericPaymentProof>
+export type GenericSwapResumeContext = MarketplaceDriverSwapResumeContext
+export type GenericSwapResumeState = MarketplaceDriverSwapResumeState
 export type GenericAuctionSettlementIntent = MarketplaceDriverAuctionSettlementIntent<
   GenericPaymentProof,
   MarketplaceDriverValidationExpected
@@ -113,8 +124,12 @@ export type EvmEscrowPolicy = MarketplaceDriverOrderPolicy<
   GenericPaymentIntent,
   GenericPaymentValidationRequest,
   GenericPaymentValidationResult,
-  GenericPaymentRecoveryItem,
-  GenericPaymentRecoveryState
+  GenericPaymentSweepInput,
+  GenericPaymentSweepState,
+  GenericPaymentSettlementIntent,
+  GenericPaymentSettlementState,
+  GenericSwapResumeContext,
+  GenericSwapResumeState
 > & {
   method: 'evm'
   id: 'evm:multi-escrow'
@@ -136,7 +151,8 @@ export type EvmEscrowPolicy = MarketplaceDriverOrderPolicy<
     policy: 'evm:multi-escrow'
     data: Record<string, unknown>
   }>
-  recover(payment: GenericPaymentRecoveryItem): AsyncIterable<GenericPaymentRecoveryState>
+  resumeSwapOperations(context: GenericSwapResumeContext): AsyncIterable<GenericSwapResumeState>
+  sweepPayment(payment: GenericPaymentSweepInput): AsyncIterable<GenericPaymentSweepState>
   pay(intent: GenericPaymentIntent): AsyncIterable<GenericPolicyPaymentState>
   validatePayment(request: GenericPaymentValidationRequest): Promise<GenericPaymentValidationResult>
   client(seed: string, tradeIndex?: number): MarketplaceEvmClient
@@ -150,8 +166,12 @@ export type EvmAuctionPolicy = MarketplaceDriverAuctionPolicy<
   GenericPaymentIntent,
   GenericPaymentValidationRequest,
   GenericPaymentValidationResult,
-  GenericPaymentRecoveryItem,
-  GenericPaymentRecoveryState,
+  GenericPaymentSweepInput,
+  GenericPaymentSweepState,
+  GenericPaymentSettlementIntent,
+  GenericPaymentSettlementState,
+  GenericSwapResumeContext,
+  GenericSwapResumeState,
   GenericAuctionSettlementIntent,
   GenericAuctionSettlementResult
 > & {
@@ -175,7 +195,8 @@ export type EvmAuctionPolicy = MarketplaceDriverAuctionPolicy<
     policy: 'evm:multi-escrow-auction-v1'
     data: Record<string, unknown>
   }>
-  recover(payment: GenericPaymentRecoveryItem): AsyncIterable<GenericPaymentRecoveryState>
+  resumeSwapOperations(context: GenericSwapResumeContext): AsyncIterable<GenericSwapResumeState>
+  sweepPayment(payment: GenericPaymentSweepInput): AsyncIterable<GenericPaymentSweepState>
   pay(intent: GenericPaymentIntent): AsyncIterable<GenericPolicyPaymentState>
   validatePayment(request: GenericPaymentValidationRequest): Promise<GenericPaymentValidationResult>
   refundPayment(intent: GenericAuctionSettlementIntent & {
