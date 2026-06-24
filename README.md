@@ -5,6 +5,16 @@ marketplaces. It owns EVM escrow validation, escrow lifecycle calls,
 Boltz-backed swap orchestration, operation recovery, and the account
 abstraction integration point.
 
+## Docs
+
+Package-owned docs live in [`docs`](docs/README.md). Start with
+[`docs/getting-started.md`](docs/getting-started.md) and regenerate the API
+reference with:
+
+```sh
+npm run docs:api
+```
+
 It deliberately does **not** depend on `nostr-tools`, NDK, or any Nostr event
 types. Nostr marketplace adapters should translate listing/order proofs into
 the plain request types exported by this package.
