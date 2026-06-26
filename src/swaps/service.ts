@@ -4,7 +4,6 @@ import { deriveEvmSwapMaterial, resolveEvmSeedConfig } from '../seed.js'
 import { btcAmountToSats } from './amounts.js'
 import type { EvmSwapService, SwapAmountLimits, SwapInRequest, SwapOutRequest, SwapServiceOptions } from './types.js'
 
-const duplicatePreimageHashError = 'Boltz API 400: {"error":"a swap with this preimage hash exists already"}'
 const maxSwapInCreateAttempts = 25
 
 type LimitReason = 'unsupported_pair' | 'below_minimum' | 'above_maximum'
@@ -26,7 +25,8 @@ function nowSeconds(now?: () => number): number {
 }
 
 function isDuplicatePreimageHashError(error: unknown): boolean {
-  return error instanceof Error && error.message === duplicatePreimageHashError
+  if (!(error instanceof Error)) return false
+  return error.message.includes('preimage hash') && error.message.includes('exists already')
 }
 
 function formatLimitMessage(reason: LimitReason, limits: SwapAmountLimits): string {
