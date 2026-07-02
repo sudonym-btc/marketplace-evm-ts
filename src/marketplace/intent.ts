@@ -1,5 +1,6 @@
 import type { EvmAddress, EvmAmount, EvmHex } from '../types.js'
 import { zeroAddress } from '../utils/hex.js'
+import { evmPurchaseInvoiceDescription } from './invoices.js'
 import type {
   EvmPaymentAsset,
   EvmResolvedPaymentIntent,
@@ -105,9 +106,7 @@ export function resolveEvmPaymentIntent(
     fee: evmAmount(intent.fee, asset.decimals),
     unlockAt: BigInt(intent.unlockAt),
     ...(intent.metadata ? { metadata: intent.metadata } : {}),
-    description: intent.purpose === 'bid'
-      ? `Marketplace auction bid ${intent.settlementId}`
-      : `Marketplace escrow ${intent.settlementId}`,
+    description: evmPurchaseInvoiceDescription(intent.tradeId),
   }
 }
 

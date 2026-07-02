@@ -5,11 +5,14 @@ import {
   createEvmAuctionPolicy,
   createEvmEscrowPolicy,
   createMarketplaceEvmClient,
+  evmPayoutInvoiceDescription,
+  evmPurchaseInvoiceDescription,
 } from '../dist/index.js'
 import { multiEscrowAbi, multiEscrowRuntimeBytecodeHash } from '@sudonym-btc/marketplace-evm-contracts'
 import { erc20Abi } from '../dist/contracts/erc20.js'
 import { calculateEscrowFee } from '../dist/escrow/fees.js'
 import { findErc20SwapLockup } from '../dist/swaps/erc20Swap.js'
+import { sweepEvmMarketplacePayment } from '../dist/marketplace/sweep.js'
 import { deriveEvmOwnerAccount, deriveEvmSwapMaterial, deriveEvmTradeId } from '../dist/seed.js'
 import { MemoryOperationStore } from '../dist/utils/store.js'
 import { createPublicClient, decodeFunctionData, http } from 'viem'
@@ -91,6 +94,11 @@ test('calculates clamped escrow fees', () => {
     }),
     90n,
   )
+})
+
+test('formats marketplace swap invoice descriptions', () => {
+  assert.equal(evmPurchaseInvoiceDescription('trade-123'), 'Marketplace Purchase trade-123')
+  assert.equal(evmPayoutInvoiceDescription('trade-123'), 'Marketplace Payout trade-123')
 })
 
 test('stores operation records in memory', async () => {
@@ -330,6 +338,148 @@ test('decodes ERC20Swap lockup logs needed for reverse-swap claims', () => {
   assert.equal(lockup.amount, 1_776_710_000_000_000n)
   assert.equal(lockup.timelock, 8604n)
   assert.equal(lockup.refundAddress.toLowerCase(), '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266')
+})
+
+test('sweeps withdrawable EVM escrow balances into a Boltz swap-out', async () => {
+  const seed = '9'.repeat(64)
+  const chainId = 412346
+  const tradeIndex = 3
+  const usdt = '0x00000000000000000000000000000000000000a1'
+  const tbtc = '0x00000000000000000000000000000000000000b2'
+  const contractAddress = '0x00000000000000000000000000000000000000e5'
+  const beneficiary = indexedSmartAccount(tradeIndex)
+  const store = new MemoryOperationStore()
+  const swapRequests = []
+  const invoices = []
+  const executions = []
+  const chain = {
+    id: 'arbitrum-regtest',
+    chainId,
+    boltzCurrency: 'ARB',
+    publicClient: {
+      async readContract({ args }) {
+        return args[0].toLowerCase() === beneficiary.toLowerCase()
+          ? [[usdt], [225_000_000n]]
+          : [[], []]
+      },
+    },
+    nativeAsset: {
+      chainId,
+      address: '0x0000000000000000000000000000000000000000',
+      denomination: 'ETH',
+      decimals: 18,
+    },
+    assets: [
+      { chainId, address: usdt, denomination: 'USDT', decimals: 6, boltzCurrency: 'USDT' },
+      { chainId, address: tbtc, denomination: 'tBTC', decimals: 18, boltzCurrency: 'tBTC' },
+    ],
+    multiEscrowAddress: contractAddress,
+    accountAbstraction: aaConfig(),
+  }
+  const accounts = {
+    ownerAccount(index, requestedChainId) {
+      return deriveEvmOwnerAccount(seed, { tradeIndex: index, chainId: requestedChainId })
+    },
+    async smartAccountAddress(index) {
+      return indexedSmartAccount(index)
+    },
+  }
+  const swaps = {
+    async swapOut(request) {
+      swapRequests.push(request)
+      assert.equal(request.routeVia.boltzCurrency, 'tBTC')
+      assert.equal(request.routeVia.assetAddress, tbtc)
+      assert.equal(request.preLockCalls[0].name, 'MultiEscrow.withdraw')
+      if (!request.invoice) {
+        return {
+          type: 'external_invoice_required',
+          operation: { id: 'op-invoice', kind: 'swap_out', status: 'external_invoice_required', chainId, data: {}, createdAt: 1, updatedAt: 1 },
+          amount: { value: 500_000_000_000_000n, denomination: 'tBTC', decimals: 18 },
+          lockAssetAddress: tbtc,
+          preLockCalls: request.preLockCalls,
+        }
+      }
+      return {
+        type: 'awaiting_resolution',
+        operation: { id: 'op-lock', kind: 'swap_out', status: 'awaiting_onchain', chainId, data: {}, createdAt: 1, updatedAt: 1 },
+        swapId: 'swap-1',
+        expectedAmount: 49_000,
+        claimAddress: '0x00000000000000000000000000000000000000c1',
+        lockupAddress: '0x00000000000000000000000000000000000000d1',
+        lockAssetAddress: tbtc,
+        preLockCalls: [
+          ...request.preLockCalls,
+          { name: 'DEX.0', to: '0x00000000000000000000000000000000000000d2', data: '0x1234' },
+        ],
+        timeoutBlockHeight: 456,
+      }
+    },
+  }
+  const executor = {
+    async execute(calls, options) {
+      executions.push({ calls, options })
+      return {
+        txHash: `0x${'a'.repeat(64)}`,
+        accountAddress: beneficiary,
+      }
+    },
+  }
+
+  const states = []
+  for await (const state of sweepEvmMarketplacePayment({
+    chains: [chain],
+    operationStore: store,
+    state: { enabled: true, started: true, maxUsedIndex: 5, nextTradeIndex: 6, startSummary: 'Ready' },
+    payment: {
+      paymentId: 'payment-1',
+      tradeId: `0x${'1'.repeat(64)}`,
+      orderGroupId: 'order-1',
+      listingAnchor: 'listing-1',
+      createdAt: 1,
+      seed,
+      proof: {
+        driver: 'evm',
+        params: {
+          chainId,
+          contractAddress,
+          tradeId: `0x${'1'.repeat(64)}`,
+          buyerAddress: '0x0000000000000000000000000000000000000001',
+          sellerAddress: beneficiary,
+          arbiterAddress: '0x0000000000000000000000000000000000000002',
+        },
+      },
+    },
+    client: (_seed, index) => ({
+      accounts,
+      ...(index !== undefined ? { swaps, executor } : {}),
+    }),
+    async createPayoutInvoice({ amountSats, description }) {
+      invoices.push({ amountSats, description })
+      return {
+        type: 'bolt11',
+        bolt11: 'lnbc1sweep',
+        amount: { value: String(amountSats), denomination: 'sats', decimals: 0 },
+        description,
+      }
+    },
+  })) states.push(state)
+
+  assert.equal(invoices[0].amountSats, 50_000)
+  assert.equal(invoices[0].description, evmPayoutInvoiceDescription(`0x${'1'.repeat(64)}`))
+  assert.equal(swapRequests.length, 2)
+  assert.equal(swapRequests[1].invoice, 'lnbc1sweep')
+  assert.deepEqual(executions[0].calls.map(call => call.name), [
+    'MultiEscrow.withdraw',
+    'DEX.0',
+    'ERC20.approve',
+    'ERC20Swap.lock',
+  ])
+  assert.equal(executions[0].options.operationId, 'op-lock')
+  assert.equal(states.at(-1).type, 'swept')
+  assert.equal(states.at(-1).data.sweeps[0].swapId, 'swap-1')
+  const stored = await store.get('op-lock')
+  assert.equal(stored.status, 'locking')
+  assert.equal(stored.txHash, `0x${'a'.repeat(64)}`)
 })
 
 test('derives deterministic EVM owner accounts from the marketplace seed and trade index', () => {

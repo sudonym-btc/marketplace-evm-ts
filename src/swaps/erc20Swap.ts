@@ -1,10 +1,12 @@
 import { decodeEventLog, encodeFunctionData, parseAbi } from 'viem'
 
+import { erc20Abi } from '../contracts/erc20.js'
 import type { EvmAddress, EvmHash, EvmHex, NamedEvmCall } from '../types.js'
 
 export const erc20SwapAbi = parseAbi([
   'event Lockup(bytes32 indexed preimageHash,uint256 amount,address tokenAddress,address indexed claimAddress,address indexed refundAddress,uint256 timelock)',
   'function claim(bytes32 preimage,uint256 amount,address tokenAddress,address refundAddress,uint256 timelock)',
+  'function lock(bytes32 preimageHash,uint256 amount,address tokenAddress,address claimAddress,uint256 timelock)',
 ])
 
 export type Erc20SwapLockup = {
@@ -48,6 +50,42 @@ export function erc20SwapClaimCall(options: {
       ],
     }),
   }
+}
+
+export function erc20SwapLockCalls(options: {
+  contractAddress: EvmAddress
+  preimageHash: EvmHex
+  amount: bigint
+  tokenAddress: EvmAddress
+  claimAddress: EvmAddress
+  timelock: bigint | number
+}): NamedEvmCall[] {
+  return [
+    {
+      name: 'ERC20.approve',
+      to: options.tokenAddress,
+      data: encodeFunctionData({
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: [options.contractAddress, options.amount],
+      }),
+    },
+    {
+      name: 'ERC20Swap.lock',
+      to: options.contractAddress,
+      data: encodeFunctionData({
+        abi: erc20SwapAbi,
+        functionName: 'lock',
+        args: [
+          options.preimageHash,
+          options.amount,
+          options.tokenAddress,
+          options.claimAddress,
+          BigInt(options.timelock),
+        ],
+      }),
+    },
+  ]
 }
 
 export function findErc20SwapLockup(

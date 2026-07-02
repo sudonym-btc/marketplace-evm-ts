@@ -18,18 +18,23 @@ import type {
   MarketplaceDriverStartResult,
   MarketplaceDriverSwapResumeContext,
   MarketplaceDriverSwapResumeState,
+  MarketplaceDriverConstructorOptions,
+  MarketplaceDriverCreateInvoice,
   MarketplaceDriverValidationExpected,
   MarketplaceDriverValidationRequest,
   MarketplaceDriverValidationResult,
   MarketplaceDriverWatermarkContext,
   MarketplaceDriverWatermarkDiscovery,
   MarketplaceDriverLogger,
+  MarketplaceDriverWithdrawalOptions,
 } from '@sudonym-btc/marketplace-driver-interface'
+import type { LocalAccount } from 'viem'
 import type {
   EvmAddress,
   EvmAmount,
   EvmBoltzRouteVia,
   EvmChainConfig,
+  EvmExecutor,
   EvmHex,
   EvmOperationStore,
   ResolvedEvmChainConfig,
@@ -68,6 +73,9 @@ export type EvmPaymentAsset = {
   boltzRouteVia?: EvmBoltzRouteVia
 }
 
+export type EvmCreateInvoice = MarketplaceDriverCreateInvoice
+export type EvmWithdrawalOptions = MarketplaceDriverWithdrawalOptions
+
 export type EvmMarketplaceChainConfig = EvmChainConfig & {
   multiEscrowAddress: EvmAddress
   multiEscrowBytecodeHash?: EvmHex
@@ -84,11 +92,11 @@ export type EvmMarketplacePolicyState = {
   error?: string
 }
 
-export type EvmMarketplacePolicyOptions = {
+export type EvmMarketplacePolicyOptions = MarketplaceDriverConstructorOptions & {
   chains: EvmMarketplaceChainConfig[]
   operationStore: EvmOperationStore
-  appId?: string
-  logger?: MarketplaceDriverLogger
+  settlementAccount?: LocalAccount
+  settlementExecutor?: EvmExecutor
 }
 
 export type GenericAmount = MarketplaceDriverAmount

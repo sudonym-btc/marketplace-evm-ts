@@ -9,6 +9,7 @@ export { createEvmEscrowCallBuilder } from './escrow/callBuilder.js'
 export { createEvmEscrowValidator } from './validation/escrowPaymentValidator.js'
 export { createEvmAuctionPolicy } from './marketplace/auctionPolicy.js'
 export { createEvmEscrowPolicy } from './marketplace/escrowPolicy.js'
+export { evmPayoutInvoiceDescription, evmPurchaseInvoiceDescription } from './marketplace/invoices.js'
 export { createEvmSwapService, SwapAmountLimitError } from './swaps/service.js'
 
 export type { MarketplaceEvmClient } from './client.js'
@@ -105,6 +106,7 @@ export type {
   EvmAuctionPolicy,
   EvmEscrowPaymentPolicy,
   EvmEscrowPolicy,
+  EvmCreateInvoice,
   EvmMarketplaceChainConfig,
   EvmMarketplacePolicyOptions,
   EvmMarketplacePolicyState,
@@ -112,6 +114,7 @@ export type {
   EvmPaymentAsset,
   EvmPaymentPolicy,
   EvmResolvedPaymentIntent,
+  EvmWithdrawalOptions,
   GenericAmount,
   GenericAuctionSettlementIntent,
   GenericAuctionSettlementResult,

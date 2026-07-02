@@ -36,6 +36,12 @@ export type SwapOutRequest = SwapAttemptRequest & {
   amount?: EvmAmount
   invoice?: string
   invoiceDescription?: string
+  routeVia?: {
+    boltzCurrency: string
+    assetAddress: EvmAddress
+    decimals: number
+    quoteCurrency: string
+  }
   preLockCalls?: NamedEvmCall[]
 }
 
@@ -78,7 +84,11 @@ export type SwapOutResult =
       type: 'external_invoice_required'
       operation: EvmOperationRecord
       amount?: EvmAmount
+      invoiceAmountSats?: number
       description?: string
+      lockAssetAddress?: EvmAddress
+      preLockCalls?: NamedEvmCall[]
+      limits?: SwapAmountLimits
     }
   | {
       type: 'awaiting_resolution'
@@ -87,6 +97,8 @@ export type SwapOutResult =
       expectedAmount?: number
       claimAddress?: EvmAddress
       lockupAddress?: EvmAddress
+      lockAssetAddress?: EvmAddress
+      preLockCalls?: NamedEvmCall[]
       limits?: SwapAmountLimits
       timeoutBlockHeight: number
     }

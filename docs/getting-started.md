@@ -40,6 +40,10 @@ const orderDriver = createEvmEscrowPolicy({
   chains,
   operationStore,
   appId: 'marketplace',
+  withdrawals: {
+    createInvoice: (amountSats, description) =>
+      lightningWallet.createInvoice(amountSats, description),
+  },
 })
 
 const api = marketplace.bind(pool, relays, {
@@ -48,6 +52,10 @@ const api = marketplace.bind(pool, relays, {
   orderDrivers: [orderDriver],
 })
 ```
+
+The EVM driver supplies payout invoice requests with descriptions like
+`Marketplace Payout ${tradeId}`. Swap-in purchase invoices use
+`Marketplace Purchase ${tradeId}`.
 
 ## Validate escrow proofs
 

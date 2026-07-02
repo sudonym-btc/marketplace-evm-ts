@@ -8,7 +8,7 @@ import {
 import { createBoltzRestClient } from '../../dist/boltz/restClient.js'
 import { MemoryOperationStore } from '../../dist/utils/store.js'
 import { sha256Hex as runtimeSha256Hex } from '../../dist/utils/sha256.js'
-import { clearBoltzPendingEvmTransactions, dexQuoteIn, dexQuoteOut, encodeDexCalls, satsToTbtcWei, sha256Hex, tbtcWeiToSatsCeil, waitForSwapStatus } from './support/boltz.mjs'
+import { clearBoltzPendingEvmTransactions, dexQuoteOut, encodeDexCalls, satsToTbtcWei, sha256Hex, tbtcWeiToSatsCeil, waitForSwapStatus } from './support/boltz.mjs'
 import {
   amount,
   createAccount,
@@ -140,7 +140,7 @@ async function reverseSwapTbtcToSmartAccount(evm, store, tradeIndex, attemptInde
   }
 }
 
-async function createAndLockSubmarineSwap(evm, tradeIndex, attemptIndex, invoice, paymentHash) {
+async function createAndLockSubmarineSwap(evm, tradeIndex, attemptIndex, invoice, paymentHash, request = {}) {
   const result = await evm.swaps.swapOut({
     tradeIndex,
     attemptIndex,
@@ -149,6 +149,7 @@ async function createAndLockSubmarineSwap(evm, tradeIndex, attemptIndex, invoice
     lightningCurrency: 'BTC',
     assetAddress: tbtc.address,
     invoice,
+    ...request,
   })
 
   assert.equal(result.type, 'awaiting_resolution')
@@ -157,15 +158,16 @@ async function createAndLockSubmarineSwap(evm, tradeIndex, attemptIndex, invoice
   assert.ok(result.lockupAddress)
 
   const lockedAmount = satsToTbtcWei(result.expectedAmount)
+  const lockAssetAddress = result.lockAssetAddress ?? tbtc.address
   const calls = erc20SwapLockCalls({
     contractAddress: result.lockupAddress,
     preimageHash: `0x${paymentHash}`,
     amount: lockedAmount,
-    assetAddress: tbtc.address,
+    assetAddress: lockAssetAddress,
     claimAddress: result.claimAddress,
     timelock: result.timeoutBlockHeight,
   })
-  await evm.executor.execute(calls, { chainId: arbitrum.chainId })
+  await evm.executor.execute([...(result.preLockCalls ?? []), ...calls], { chainId: arbitrum.chainId })
 
   const status = await waitForSwapStatus(
     boltz,
@@ -282,32 +284,28 @@ test('swap-in can bridge through tBTC, DEX into USDT, and fund a USDT escrow', {
 test('swap-out can DEX USDT into tBTC and settle a Lightning invoice', { timeout: 240_000 }, async () => {
   const { evm, tradeIndex } = makeSeededAaEvm({ tradeIndex: 3 })
   const smartAccount = await evm.executor.getAddress(arbitrum.chainId)
-  await fundAccount(config, publicClient, { address: smartAccount }, {
-    usdt: 100_000_000n,
-  })
-
-  const dex = await dexQuoteIn(config.boltz.apiUrl, arbitrum.boltzCurrency, {
-    tokenIn: usdt.address,
-    tokenOut: tbtc.address,
-    amountIn: 100_000_000n,
-  })
-  const dexCalls = await encodeDexCalls(config.boltz.apiUrl, arbitrum.boltzCurrency, {
-    recipient: smartAccount,
-    amountIn: dex.amountIn,
-    amountOutMin: dex.amountOut,
-    data: dex.data,
-  })
-  await evm.executor.execute(dexCalls, { chainId: arbitrum.chainId })
-
-  const bridgeBalance = await assetBalance(publicClient, tbtc.address, smartAccount)
-  assert.ok(bridgeBalance >= satsToTbtcWei(100_000))
+  const usdtAmount = 100_000_000n
+  await fundAccount(config, publicClient, { address: smartAccount }, { usdt: usdtAmount })
 
   const { invoice, paymentHash } = createInvoice(100_000, 'marketplace-evm-ts USDT swap-out', {
     apiUrl: config.boltz.apiUrl,
   })
-  const swap = await createAndLockSubmarineSwap(evm, tradeIndex, 0, invoice, paymentHash)
+  const before = await assetBalance(publicClient, usdt.address, smartAccount)
+  const swap = await createAndLockSubmarineSwap(evm, tradeIndex, 0, invoice, paymentHash, {
+    boltzCurrency: 'USDT',
+    assetAddress: usdt.address,
+    amount: { value: usdtAmount, denomination: 'USD', decimals: usdt.decimals },
+    routeVia: {
+      boltzCurrency: 'tBTC',
+      assetAddress: tbtc.address,
+      decimals: tbtc.decimals,
+      quoteCurrency: arbitrum.boltzCurrency,
+    },
+  })
+  const after = await assetBalance(publicClient, usdt.address, smartAccount)
 
-  assert.ok(bridgeBalance >= swap.lockedAmount)
+  assert.ok(before > after)
+  assert.equal(after < 1000n, true)
   assert.match(swap.preimage, /^[0-9a-f]{64}$/)
 })
 

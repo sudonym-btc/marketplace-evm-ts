@@ -26,7 +26,7 @@ function nowSeconds(now?: () => number): number {
 
 function isDuplicatePreimageHashError(error: unknown): boolean {
   if (!(error instanceof Error)) return false
-  return error.message.includes('preimage hash') && error.message.includes('exists already')
+  return /"error"\s*:\s*"a swap with this preimage hash exists already"\s*[,}]/.test(error.message)
 }
 
 function formatLimitMessage(reason: LimitReason, limits: SwapAmountLimits): string {
@@ -83,6 +83,25 @@ function assertBoltzLimits(input: {
     throw new SwapAmountLimitError('above_maximum', limits)
   }
   return limits
+}
+
+function swapOutFeeAdjustedInvoiceSats(
+  pair: BoltzSubmarinePair,
+  lockAmountSats: number | undefined,
+): number | undefined {
+  if (lockAmountSats === undefined) return undefined
+  const minerFees = Math.max(0, Math.ceil(pair.fees?.minerFees ?? 0))
+  const percentage = Math.max(0, pair.fees?.percentage ?? 0)
+  if (lockAmountSats <= minerFees) return 0
+
+  let invoiceAmount = Math.floor((lockAmountSats - minerFees) / (1 + percentage / 100))
+  while (
+    invoiceAmount > 0
+    && Math.ceil(invoiceAmount * (1 + percentage / 100)) + minerFees > lockAmountSats
+  ) {
+    invoiceAmount -= 1
+  }
+  return invoiceAmount
 }
 
 function routeSwapAmountToSats(input: {
@@ -302,7 +321,77 @@ export function createEvmSwapService(options: SwapServiceOptions): EvmSwapServic
         attemptIndex: request.attemptIndex,
       })
       const senderAddress = await options.accounts.smartAccountAddress(request.tradeIndex, request.chainId)
+      const routeVia = request.routeVia
+      const from = routeVia?.boltzCurrency ?? request.boltzCurrency
+      const to = request.lightningCurrency ?? 'BTC'
+      let preLockCalls = request.preLockCalls
+      let swapAmount = request.amount
+      let lockAssetAddress = routeVia?.assetAddress ?? request.assetAddress
+      let routeQuote:
+        | {
+            quoteCurrency: string
+            tokenIn: string
+            tokenOut: string
+            amountIn: string
+            amountOut: string
+          }
+        | undefined
+
+      if (routeVia) {
+        if (!request.assetAddress) throw new Error('Routed Boltz swap-out requires a source assetAddress')
+        if (!request.amount) throw new Error('Routed Boltz swap-out requires an amount')
+        const dex = await options.boltz.quoteTokenAmountIn(routeVia.quoteCurrency, {
+          tokenIn: request.assetAddress,
+          tokenOut: routeVia.assetAddress,
+          amount: request.amount.value,
+        })
+        const dexCalls = await options.boltz.encodeTokenSwap(routeVia.quoteCurrency, {
+          recipient: senderAddress,
+          amountIn: dex.amountIn,
+          amountOutMin: dex.amountOut,
+          data: dex.data,
+        })
+        preLockCalls = [...(request.preLockCalls ?? []), ...dexCalls]
+        swapAmount = {
+          value: dex.amountOut,
+          denomination: routeVia.boltzCurrency,
+          decimals: routeVia.decimals,
+        }
+        lockAssetAddress = routeVia.assetAddress
+        routeQuote = {
+          quoteCurrency: routeVia.quoteCurrency,
+          tokenIn: request.assetAddress,
+          tokenOut: routeVia.assetAddress,
+          amountIn: dex.amountIn.toString(),
+          amountOut: dex.amountOut.toString(),
+        }
+      }
+
+      const pairs = await options.boltz.getSubmarinePairs()
+      const pair = pairFor<BoltzSubmarinePair>(pairs, from, to)
+      if (!pair) {
+        assertBoltzLimits({ direction: 'swap-out', from, to })
+        throw new Error('unreachable')
+      }
+      const amountSats = swapAmount ? btcAmountToSats(swapAmount) : undefined
+      const limits = assertBoltzLimits({
+        direction: 'swap-out',
+        from,
+        to,
+        ...(amountSats !== undefined ? { amountSats } : {}),
+        pair,
+      })
       if (!request.invoice) {
+        const invoiceAmountSats = swapOutFeeAdjustedInvoiceSats(pair, amountSats)
+        if (invoiceAmountSats !== undefined) {
+          assertBoltzLimits({
+            direction: 'swap-out',
+            from,
+            to,
+            amountSats: invoiceAmountSats,
+            pair,
+          })
+        }
         const record = operation(
           { id: material.operationId, chainId: request.chainId },
           'swap_out',
@@ -310,7 +399,17 @@ export function createEvmSwapService(options: SwapServiceOptions): EvmSwapServic
           {
             request: publicSwapRequest(request, material.operationId, { senderAddress }),
             senderAddress,
-            preLockCalls: request.preLockCalls,
+            amountSats,
+            limits,
+            preLockCalls,
+            ...(invoiceAmountSats !== undefined ? { invoiceAmountSats } : {}),
+            ...(swapAmount ? { swapAmount } : {}),
+            ...(lockAssetAddress ? { lockAssetAddress } : {}),
+            ...(routeVia ? {
+              routeVia,
+              routeQuote,
+              sourceBoltzCurrency: request.boltzCurrency,
+            } : {}),
           },
           options.now,
         )
@@ -323,27 +422,14 @@ export function createEvmSwapService(options: SwapServiceOptions): EvmSwapServic
         return {
           type: 'external_invoice_required',
           operation: record,
-          ...(request.amount ? { amount: request.amount } : {}),
+          ...(swapAmount ? { amount: swapAmount } : {}),
+          ...(invoiceAmountSats !== undefined ? { invoiceAmountSats } : {}),
           ...(request.invoiceDescription ? { description: request.invoiceDescription } : {}),
+          ...(lockAssetAddress ? { lockAssetAddress } : {}),
+          ...(preLockCalls ? { preLockCalls } : {}),
+          limits,
         }
       }
-
-      const from = request.boltzCurrency
-      const to = request.lightningCurrency ?? 'BTC'
-      const pairs = await options.boltz.getSubmarinePairs()
-      const pair = pairFor<BoltzSubmarinePair>(pairs, from, to)
-      if (!pair) {
-        assertBoltzLimits({ direction: 'swap-out', from, to })
-        throw new Error('unreachable')
-      }
-      const amountSats = request.amount ? btcAmountToSats(request.amount) : undefined
-      const limits = assertBoltzLimits({
-        direction: 'swap-out',
-        from,
-        to,
-        ...(amountSats !== undefined ? { amountSats } : {}),
-        pair,
-      })
       const submarine = await options.boltz.createSubmarineSwap({
         from,
         to,
@@ -362,7 +448,13 @@ export function createEvmSwapService(options: SwapServiceOptions): EvmSwapServic
           lockupAddress: submarine.address,
           senderAddress,
           timeoutBlockHeight: submarine.timeoutBlockHeight,
-          preLockCalls: request.preLockCalls,
+          preLockCalls,
+          ...(lockAssetAddress ? { lockAssetAddress } : {}),
+          ...(routeVia ? {
+            routeVia,
+            routeQuote,
+            sourceBoltzCurrency: request.boltzCurrency,
+          } : {}),
         },
         options.now,
       )
@@ -382,6 +474,8 @@ export function createEvmSwapService(options: SwapServiceOptions): EvmSwapServic
         ...(submarine.expectedAmount ? { expectedAmount: submarine.expectedAmount } : {}),
         ...(submarine.claimAddress ? { claimAddress: submarine.claimAddress } : {}),
         ...(submarine.address ? { lockupAddress: submarine.address } : {}),
+        ...(lockAssetAddress ? { lockAssetAddress } : {}),
+        ...(preLockCalls ? { preLockCalls } : {}),
         timeoutBlockHeight: submarine.timeoutBlockHeight,
       }
     },

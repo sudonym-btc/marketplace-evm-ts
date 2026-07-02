@@ -3,14 +3,17 @@ import { MarketplacePolicyBase } from '@sudonym-btc/marketplace-driver-interface
 import { resolveEvmChainConfigs } from '../chains.js'
 import { createMarketplaceEvmClient } from '../client.js'
 import { evmPaymentAssets } from './assets.js'
+import { evmPayoutInvoiceDescription } from './invoices.js'
 import { recoverActiveEvmSwapOperations } from './operationRecovery.js'
 import { payEvmIntent } from './pay.js'
+import { sweepEvmMarketplacePayment } from './sweep.js'
 import { validateEvmMarketplacePayment } from './validate.js'
 import type {
   EvmMarketplacePolicyOptions,
   EvmMarketplacePolicyState,
   EvmPaymentAsset,
   EvmPaymentPolicy,
+  GenericBolt11PaymentRequest,
   GenericPaymentIntent,
   GenericPaymentSettlementIntent,
   GenericPaymentSettlementState,
@@ -62,6 +65,9 @@ export abstract class EvmMarketplacePolicyBase<
 > {
   protected readonly chains: ResolvedEvmMarketplaceChainConfig[]
   private readonly operationStore: EvmMarketplacePolicyOptions['operationStore']
+  private readonly withdrawals: EvmMarketplacePolicyOptions['withdrawals']
+  protected readonly settlementAccount: EvmMarketplacePolicyOptions['settlementAccount']
+  private readonly settlementExecutor: EvmMarketplacePolicyOptions['settlementExecutor']
   private readonly appId: string | undefined
   private readonly typedPolicyId: Id
   private readonly recoveryNoun: string
@@ -87,6 +93,9 @@ export abstract class EvmMarketplacePolicyBase<
     })
     this.chains = chains
     this.operationStore = options.operationStore
+    this.withdrawals = options.withdrawals
+    this.settlementAccount = options.settlementAccount
+    this.settlementExecutor = options.settlementExecutor
     this.appId = options.appId
     this.typedPolicyId = config.id
     this.recoveryNoun = config.recoveryNoun
@@ -106,6 +115,17 @@ export abstract class EvmMarketplacePolicyBase<
       seed,
       ...(tradeIndex !== undefined ? { tradeIndex } : {}),
       ...(primaryChain?.boltz ? { boltz: primaryChain.boltz } : {}),
+      ...(this.logger ? { logger: this.logger } : {}),
+    })
+  }
+
+  protected settlementClient() {
+    if (!this.settlementAccount) throw new Error('EVM auction settlement requires a settlement account')
+    return createMarketplaceEvmClient({
+      chains: this.chains,
+      operationStore: this.operationStore,
+      account: this.settlementAccount,
+      ...(this.settlementExecutor ? { executor: this.settlementExecutor } : {}),
       ...(this.logger ? { logger: this.logger } : {}),
     })
   }
@@ -190,11 +210,35 @@ export abstract class EvmMarketplacePolicyBase<
     return {}
   }
 
+  protected async createPayoutInvoice(options: {
+    tradeId: string
+    amountSats: number
+    description?: string
+  }): Promise<GenericBolt11PaymentRequest> {
+    if (!this.withdrawals) throw new Error('EVM payout invoice provider is not configured')
+    const description = options.description ?? evmPayoutInvoiceDescription(options.tradeId)
+    const bolt11 = await this.withdrawals.createInvoice(options.amountSats, description)
+    return {
+      type: 'bolt11',
+      bolt11,
+      amount: {
+        value: options.amountSats.toString(),
+        currency: 'BTC',
+        denomination: 'sats',
+        decimals: 0,
+      },
+      description,
+    }
+  }
+
   async *sweepPayment(payment: GenericPaymentSweepInput): AsyncIterable<GenericPaymentSweepState> {
-    yield this.noOpSweepState({
-      reason: this.recoveryReason,
-      driver: payment.proof.driver,
-      paymentId: payment.paymentId,
+    yield* sweepEvmMarketplacePayment({
+      chains: this.chains,
+      operationStore: this.operationStore,
+      state: this.state(),
+      payment,
+      client: (seed, tradeIndex) => this.client(seed, tradeIndex),
+      createPayoutInvoice: options => this.createPayoutInvoice(options),
     })
   }
 

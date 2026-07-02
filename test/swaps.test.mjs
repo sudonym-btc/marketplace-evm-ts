@@ -25,6 +25,7 @@ function boltzStub(overrides = {}) {
     reverseRequests: [],
     submarineRequests: [],
     statusRequests: [],
+    quoteInRequests: [],
     quoteOutRequests: [],
     encodeRequests: [],
 
@@ -81,6 +82,15 @@ function boltzStub(overrides = {}) {
       return {
         amountIn: 500_000_000_000_000n,
         amountOut: request.amount,
+        data: { type: 'mock-dex' },
+      }
+    },
+
+    async quoteTokenAmountIn(currency, request) {
+      this.quoteInRequests.push({ currency, request })
+      return {
+        amountIn: request.amount,
+        amountOut: 500_000_000_000_000n,
         data: { type: 'mock-dex' },
       }
     },
@@ -442,16 +452,19 @@ test('swap-out stores invoice-required state before creating a Boltz swap', asyn
     attemptIndex: 0,
     chainId: 42161,
     boltzCurrency: 'tBTC',
-    amount: { value: 25_000n, denomination: 'tBTC', decimals: 8 },
+    amount: { value: 60_000n, denomination: 'tBTC', decimals: 8 },
     invoiceDescription: 'order payment',
   })
 
   assert.equal(result.type, 'external_invoice_required')
+  assert.equal(result.amount.value, 60_000n)
+  assert.equal(result.invoiceAmountSats, 59_907)
   assert.equal(boltz.submarineRequests.length, 0)
 
   const stored = await store.get(material.operationId)
   assert.equal(stored.status, 'external_invoice_required')
   assert.equal(stored.data.request.invoiceDescription, 'order payment')
+  assert.equal(stored.data.invoiceAmountSats, 59_907)
 })
 
 test('swap-out persists the Boltz submarine swap and resumes status by swap id', async () => {
@@ -495,6 +508,83 @@ test('swap-out persists the Boltz submarine swap and resumes status by swap id',
   const resumed = await service.resume(material.operationId)
   assert.equal(resumed.latestStatus.status, 'transaction.confirmed')
   assert.deepEqual(boltz.statusRequests, ['submarine-1'])
+})
+
+test('swap-out routes stablecoin balance through DEX calls before the Boltz lock', async () => {
+  const boltz = boltzStub()
+  const store = new MemoryOperationStore()
+  const service = createEvmSwapService({ boltz, store, seed, accounts, now: () => 325 })
+  const withdrawCall = {
+    name: 'MultiEscrow.withdraw',
+    to: '0x0000000000000000000000000000000000000e50',
+    value: 0n,
+    data: '0xabcd',
+  }
+
+  const result = await service.swapOut({
+    tradeIndex: 5,
+    attemptIndex: 0,
+    chainId: 42161,
+    boltzCurrency: 'USDT',
+    lightningCurrency: 'BTC',
+    assetAddress: '0x00000000000000000000000000000000000000ad',
+    amount: { value: 225_000_000n, denomination: 'USD', decimals: 6 },
+    invoice: 'lnbc1submarine',
+    routeVia: {
+      boltzCurrency: 'tBTC',
+      assetAddress: '0x0000000000000000000000000000000000000b7c',
+      decimals: 18,
+      quoteCurrency: 'ARB',
+    },
+    preLockCalls: [withdrawCall],
+  })
+
+  assert.equal(result.type, 'awaiting_resolution')
+  assert.equal(result.lockAssetAddress, '0x0000000000000000000000000000000000000b7c')
+  assert.deepEqual(boltz.quoteInRequests, [{
+    currency: 'ARB',
+    request: {
+      tokenIn: '0x00000000000000000000000000000000000000ad',
+      tokenOut: '0x0000000000000000000000000000000000000b7c',
+      amount: 225_000_000n,
+    },
+  }])
+  assert.deepEqual(boltz.encodeRequests, [{
+    currency: 'ARB',
+    request: {
+      recipient: '0x000000000000000000000000000000000000c105',
+      amountIn: 225_000_000n,
+      amountOutMin: 500_000_000_000_000n,
+      data: { type: 'mock-dex' },
+    },
+  }])
+  assert.deepEqual(boltz.submarineRequests[0], {
+    from: 'tBTC',
+    to: 'BTC',
+    invoice: 'lnbc1submarine',
+    pairHash: 'submarine-pair-hash',
+  })
+  assert.deepEqual(result.preLockCalls, [
+    withdrawCall,
+    {
+      name: 'DEX.0',
+      to: '0x0000000000000000000000000000000000000d0e',
+      value: 0n,
+      data: '0x1234',
+    },
+  ])
+
+  const stored = await store.get(result.operation.id)
+  assert.equal(stored.data.lockAssetAddress, '0x0000000000000000000000000000000000000b7c')
+  assert.equal(stored.data.sourceBoltzCurrency, 'USDT')
+  assert.deepEqual(stored.data.routeQuote, {
+    quoteCurrency: 'ARB',
+    tokenIn: '0x00000000000000000000000000000000000000ad',
+    tokenOut: '0x0000000000000000000000000000000000000b7c',
+    amountIn: '225000000',
+    amountOut: '500000000000000',
+  })
+  assert.equal(stored.data.preLockCalls.length, 2)
 })
 
 test('resuming a missing swap fails loudly', async () => {

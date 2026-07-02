@@ -1,6 +1,7 @@
 import { evmAuctionPolicies } from './policies.js'
 import { EvmMarketplacePolicyBase } from './policyBase.js'
 import { isMarketplaceDriverEncryptedPaymentProofParams } from '@sudonym-btc/marketplace-driver-interface'
+import { normalizeAddress } from '../utils/hex.js'
 import type {
   EvmAuctionPaymentPolicy,
   EvmAuctionPolicy,
@@ -8,6 +9,15 @@ import type {
   GenericAuctionSettlementResult,
   EvmMarketplacePolicyOptions,
 } from './types.js'
+import type { EvmAddress, EvmHash, EvmHex, NamedEvmCall } from '../types.js'
+
+const arbitrateTypes = {
+  Arbitrate: [
+    { name: 'tradeId', type: 'bytes32' },
+    { name: 'paymentFactor', type: 'uint256' },
+    { name: 'bondFactor', type: 'uint256' },
+  ],
+} as const
 
 function proofParams(intent: GenericAuctionSettlementIntent): Record<string, unknown> {
   if (isMarketplaceDriverEncryptedPaymentProofParams(intent.proof.params)) {
@@ -19,6 +29,7 @@ function proofParams(intent: GenericAuctionSettlementIntent): Record<string, unk
 function settlementProof(
   intent: GenericAuctionSettlementIntent,
   params: Record<string, unknown>,
+  data: Record<string, unknown> = {},
 ): GenericAuctionSettlementResult {
   return {
     proof: {
@@ -29,8 +40,31 @@ function settlementProof(
       method: 'evm',
       action: intent.action,
       policyType: params.policyType,
+      ...data,
     },
   }
+}
+
+function stringParam(params: Record<string, unknown>, name: string): string {
+  const value = params[name]
+  if (typeof value !== 'string' || value.length === 0) throw new Error(`Invalid EVM auction settlement ${name}`)
+  return value
+}
+
+function numberParam(params: Record<string, unknown>, name: string): number {
+  const value = params[name]
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) throw new Error(`Invalid EVM auction settlement ${name}`)
+  return value
+}
+
+function bytes32Param(params: Record<string, unknown>, name: string): EvmHex {
+  const raw = stringParam(params, name).replace(/^0x/i, '')
+  if (!/^[0-9a-fA-F]{64}$/.test(raw)) throw new Error(`Invalid EVM auction settlement ${name}`)
+  return `0x${raw.toLowerCase()}` as EvmHex
+}
+
+function contractAddressParam(params: Record<string, unknown>): EvmAddress {
+  return normalizeAddress(stringParam(params, 'contractAddress'), 'contractAddress')
 }
 
 class EvmAuctionPolicyImpl
@@ -64,13 +98,59 @@ class EvmAuctionPolicyImpl
     }
   }
 
+  private async arbitrateAuctionPayment(
+    intent: GenericAuctionSettlementIntent,
+    paymentFactor: bigint,
+    bondFactor: bigint,
+  ): Promise<{ txHash: EvmHash; call: NamedEvmCall }> {
+    const params = proofParams(intent)
+    const chainId = numberParam(params, 'chainId')
+    const contractAddress = contractAddressParam(params)
+    const tradeId = bytes32Param(params, 'tradeId')
+    if (!this.settlementAccount) throw new Error('EVM auction settlement requires a settlement account')
+    const signature = await this.settlementAccount.signTypedData({
+      domain: {
+        name: 'Nostr MultiEscrow',
+        version: '6',
+        chainId,
+        verifyingContract: contractAddress,
+      },
+      types: arbitrateTypes,
+      primaryType: 'Arbitrate',
+      message: {
+        tradeId,
+        paymentFactor,
+        bondFactor,
+      },
+    })
+    const client = this.settlementClient()
+    if (!client.executor) throw new Error('EVM auction settlement requires an executor')
+    const call = client.escrow.arbitrate({
+      tradeId,
+      contractAddress,
+      paymentFactor,
+      bondFactor,
+      signature,
+    })
+    const result = await client.executor.execute([call], {
+      chainId,
+      operationId: `auction-settlement-${tradeId}-${intent.action}`,
+    })
+    return { txHash: result.txHash, call }
+  }
+
   async refundPayment(intent: GenericAuctionSettlementIntent & { action: 'auction_refund'; refundPercent: number }) {
     const params = proofParams(intent)
+    const arbitration = await this.arbitrateAuctionPayment(intent, 0n, 0n)
     return settlementProof(intent, {
       ...params,
       action: 'auction_refund',
       refundPercent: intent.refundPercent,
       refunded: true,
+      settlementTxHash: arbitration.txHash,
+    }, {
+      settlementTxHash: arbitration.txHash,
+      settlementCall: arbitration.call.name,
     })
   }
 
