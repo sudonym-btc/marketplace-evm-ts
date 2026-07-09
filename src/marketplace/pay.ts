@@ -401,19 +401,26 @@ function failedSwapStatus(status: string): boolean {
   return /failed|expired|refunded/i.test(status)
 }
 
-async function waitForSwapLockTransaction(
+function externalPaymentDetectedSwapStatus(status: string): boolean {
+  return /^(invoice\.(set|paid)|transaction\.(mempool|confirmed|claimed))$/i.test(status)
+}
+
+async function* watchSwapLockTransaction(
   evm: ReturnType<typeof createMarketplaceEvmClient>,
   operationId: string,
-): Promise<EvmHash> {
+): AsyncIterable<{ status?: string; txHash?: EvmHash }> {
   const deadline = Date.now() + swapPaymentTimeoutMs
   let lastStatus: string | undefined
 
   while (Date.now() < deadline) {
     const resumed = await evm.swaps?.resume(operationId)
     const status = resumed?.latestStatus?.status
-    if (status && status !== lastStatus) lastStatus = status
     const txHash = resumed?.latestStatus?.transaction?.id ?? resumed?.latestStatus?.transactionHash
-    if (txHash) return txHash
+    if ((status && status !== lastStatus) || txHash) {
+      yield { ...(status ? { status } : {}), ...(txHash ? { txHash } : {}) }
+      lastStatus = status
+    }
+    if (txHash) return
     if (status && failedSwapStatus(status)) {
       throw new Error(`Boltz swap failed with ${status}`)
     }
@@ -680,9 +687,10 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
     type: 'payment_progress',
     status: 'Waiting for Lightning payment',
     data: {
-        method: 'evm',
-        purpose: intent.purpose,
-        swapId: swap.swapId,
+      method: 'evm',
+      purpose: intent.purpose,
+      stage: 'awaiting_external_payment',
+      swapId: swap.swapId,
       tradeIndex: intent.accountIndex,
     },
   }
@@ -691,7 +699,31 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
     tradeIndex: intent.accountIndex,
   })
 
-  const lockTxHash = await waitForSwapLockTransaction(evm, swap.operation.id)
+  let lockTxHash: EvmHash | undefined
+  let externalPaymentDetected = false
+  for await (const update of watchSwapLockTransaction(evm, swap.operation.id)) {
+    if (update.status && !externalPaymentDetected && externalPaymentDetectedSwapStatus(update.status)) {
+      externalPaymentDetected = true
+      yield {
+        type: 'payment_progress',
+        status: 'Lightning payment detected; finalizing escrow',
+        data: {
+          method: 'evm',
+          purpose: intent.purpose,
+          stage: 'external_payment_detected',
+          swapId: swap.swapId,
+          tradeIndex: intent.accountIndex,
+          boltzStatus: update.status,
+          ...(update.txHash ? { txHash: update.txHash } : {}),
+        },
+      }
+    }
+    if (update.txHash) {
+      lockTxHash = update.txHash
+      break
+    }
+  }
+  if (!lockTxHash) throw new Error('Boltz swap lock transaction was not detected')
   logEvmPay(request, 'info', 'Boltz lock transaction detected', {
     swapId: swap.swapId,
     txHash: lockTxHash,
@@ -703,6 +735,7 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
     data: {
       method: 'evm',
       purpose: intent.purpose,
+      stage: 'escrow_finalizing',
       swapId: swap.swapId,
       tradeIndex: intent.accountIndex,
       txHash: lockTxHash,
@@ -730,6 +763,7 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
     data: {
       method: 'evm',
       purpose: intent.purpose,
+      stage: 'escrow_finalizing',
       swapId: swap.swapId,
       tradeIndex: intent.accountIndex,
       txHash: lockTxHash,
