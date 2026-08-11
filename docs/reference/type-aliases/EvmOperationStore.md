@@ -2,15 +2,11 @@
 
 > **EvmOperationStore** = `object`
 
-Defined in: [dependencies/marketplace-evm-ts/src/types.ts:132](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/types.ts#L132)
-
 ## Methods
 
 ### delete()
 
 > **delete**(`id`): `Promise`\<`void`\>
-
-Defined in: [dependencies/marketplace-evm-ts/src/types.ts:136](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/types.ts#L136)
 
 #### Parameters
 
@@ -28,8 +24,6 @@ Defined in: [dependencies/marketplace-evm-ts/src/types.ts:136](https://github.co
 
 > **get**(`id`): `Promise`\<[`EvmOperationRecord`](EvmOperationRecord.md) \| `null`\>
 
-Defined in: [dependencies/marketplace-evm-ts/src/types.ts:133](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/types.ts#L133)
-
 #### Parameters
 
 ##### id
@@ -45,8 +39,6 @@ Defined in: [dependencies/marketplace-evm-ts/src/types.ts:133](https://github.co
 ### list()
 
 > **list**(`query?`): `Promise`\<[`EvmOperationRecord`](EvmOperationRecord.md)[]\>
-
-Defined in: [dependencies/marketplace-evm-ts/src/types.ts:135](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/types.ts#L135)
 
 #### Parameters
 
@@ -64,8 +56,6 @@ Defined in: [dependencies/marketplace-evm-ts/src/types.ts:135](https://github.co
 
 > **put**(`record`): `Promise`\<`void`\>
 
-Defined in: [dependencies/marketplace-evm-ts/src/types.ts:134](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/types.ts#L134)
-
 #### Parameters
 
 ##### record
@@ -75,3 +65,21 @@ Defined in: [dependencies/marketplace-evm-ts/src/types.ts:134](https://github.co
 #### Returns
 
 `Promise`\<`void`\>
+
+***
+
+### putIfAbsent()?
+
+> `optional` **putIfAbsent**(`record`): `Promise`\<`boolean`\>
+
+Atomically insert a record when it does not already exist.
+
+#### Parameters
+
+##### record
+
+[`EvmOperationRecord`](EvmOperationRecord.md)
+
+#### Returns
+
+`Promise`\<`boolean`\>

@@ -2,8 +2,6 @@
 
 > **SwapInRequest** = [`SwapAttemptRequest`](SwapAttemptRequest.md) & `object`
 
-Defined in: [dependencies/marketplace-evm-ts/src/swaps/types.ts:14](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/swaps/types.ts#L14)
-
 ## Type Declaration
 
 ### amount
@@ -37,6 +35,12 @@ Defined in: [dependencies/marketplace-evm-ts/src/swaps/types.ts:14](https://gith
 ### postClaimCalls?
 
 > `optional` **postClaimCalls?**: [`NamedEvmCall`](NamedEvmCall.md)[]
+
+### recoveryProof?
+
+> `optional` **recoveryProof?**: `Record`\<`string`, `unknown`\>
+
+Public proof template used to reconstruct publication after a crash.
 
 ### routeVia?
 

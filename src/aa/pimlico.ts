@@ -4,7 +4,7 @@ import { createPimlicoClient } from 'permissionless/clients/pimlico'
 import { http, type Address, type Chain } from 'viem'
 import type { EntryPointVersion } from 'viem/account-abstraction'
 
-import type { EvmCall, NamedEvmCall } from '../types.js'
+import type { EvmCall, EvmExecutionSubmission, NamedEvmCall } from '../types.js'
 import type { AaExecutor, AaExecutorOptions } from './types.js'
 
 const ENTRYPOINT_06 = '0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789'
@@ -97,30 +97,40 @@ export function createPimlicoAaExecutor(options: AaExecutorOptions): AaExecutor 
         gasSponsored: isGasSponsored(aa, paymasterClient),
       }
     },
-    async execute(calls: NamedEvmCall[]) {
+    async execute(calls: NamedEvmCall[], executionOptions) {
       const client = await clientPromise
-      const account = await accountPromise
       const userOperationHash = await (client as never as PreparedUserOperationClient).sendUserOperation({
         calls: calls.map(toUserOperationCall),
         ...paymasterOperationArgs(aa, paymasterClient, paymasterContext),
       })
+      await executionOptions.onSubmitted?.({ userOperationHash })
+      return waitForSubmission({ userOperationHash })
+    },
+    waitForSubmission,
+  }
+
+  async function waitForSubmission(submission: EvmExecutionSubmission) {
+      const client = await clientPromise
+      const account = await accountPromise
+      if (!submission.userOperationHash) {
+        throw new Error('AA reconciliation requires a user operation hash')
+      }
       const receipt = await (client as never as PreparedUserOperationClient).waitForUserOperationReceipt({
-        hash: userOperationHash,
+        hash: submission.userOperationHash,
         ...(aa.userOperationReceiptTimeoutMs ? { timeout: aa.userOperationReceiptTimeoutMs } : {}),
         ...(aa.userOperationReceiptPollingIntervalMs ? { pollingInterval: aa.userOperationReceiptPollingIntervalMs } : {}),
       })
 
       if (receipt.success === false) {
-        throw new Error(`AA user operation reverted: ${userOperationHash}`)
+        throw new Error(`AA user operation reverted: ${submission.userOperationHash}`)
       }
 
       return {
         txHash: receipt.receipt.transactionHash,
         accountAddress: account.address,
         gasSponsored: isGasSponsored(aa, paymasterClient),
-        userOperationHash,
+        userOperationHash: submission.userOperationHash,
       }
-    },
   }
 }
 

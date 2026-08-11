@@ -1,5 +1,11 @@
 export { createEvmSwapService, SwapAmountLimitError } from './service.js'
-export { erc20SwapClaimCall, erc20SwapLockCalls, findErc20SwapLockup } from './erc20Swap.js'
+export {
+  erc20SwapClaimCall,
+  erc20SwapLockCalls,
+  erc20SwapRefundCall,
+  erc20SwapCooperativeRefundCall,
+  findErc20SwapLockup,
+} from './erc20Swap.js'
 
 export type { EvmAccountManager } from '../accounts.js'
 export type {

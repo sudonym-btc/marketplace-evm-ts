@@ -8,6 +8,10 @@
     "type": "git",
     "url": "git+https://github.com/sudonym-btc/marketplace-evm-ts.git"
   },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "files": [
     "dist"
   ],
@@ -38,18 +42,19 @@
     "generate:boltz-openapi": "node scripts/generate-boltz-openapi.mjs",
     "check": "tsc --noEmit",
     "docs": "npm run docs:api",
-    "docs:api": "typedoc --plugin typedoc-plugin-markdown --tsconfig tsconfig.json --name \"Marketplace EVM Driver\" --out docs/reference --readme none --githubPages false --hideBreadcrumbs true --hidePageHeader true src/index.ts",
+    "docs:api": "typedoc --plugin typedoc-plugin-markdown --tsconfig tsconfig.json --name \"Marketplace EVM Driver\" --out docs/reference --readme none --githubPages false --hideBreadcrumbs true --hidePageHeader true --disableSources src/index.ts",
     "test": "node --test test/*.test.mjs",
-    "test:integration": "node --test --test-concurrency=1 test/integration/*.test.mjs"
+    "test:integration": "node --test --test-concurrency=1 test/integration/*.test.mjs",
+    "prepack": "npm run build"
   },
   "dependencies": {
-    "@sudonym-btc/marketplace-evm-contracts": "file:../marketplace-evm-contracts",
-    "@sudonym-btc/marketplace-driver-interface": "file:../marketplace-driver-interface-ts",
+    "@sudonym-btc/marketplace-evm-contracts": "0.1.0",
+    "@sudonym-btc/marketplace-driver-interface": "0.1.0",
     "boltz-core": "^5.0.0",
     "openapi-fetch": "^0.17.0",
     "ox": "0.11.3",
     "permissionless": "0.3.5",
-    "viem": "2.44.4"
+    "viem": "2.55.0"
   },
   "devDependencies": {
     "openapi-typescript": "^7.13.0",

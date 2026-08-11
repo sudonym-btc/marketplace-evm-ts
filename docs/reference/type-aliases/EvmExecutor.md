@@ -2,15 +2,11 @@
 
 > **EvmExecutor** = `object`
 
-Defined in: [dependencies/marketplace-evm-ts/src/types.ts:92](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/types.ts#L92)
-
 ## Methods
 
 ### execute()
 
 > **execute**(`calls`, `options`): `Promise`\<[`EvmExecutionResult`](EvmExecutionResult.md)\>
-
-Defined in: [dependencies/marketplace-evm-ts/src/types.ts:94](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/types.ts#L94)
 
 #### Parameters
 
@@ -32,8 +28,6 @@ Defined in: [dependencies/marketplace-evm-ts/src/types.ts:94](https://github.com
 
 > **getAddress**(`chainId`): `Promise`\<`` `0x${string}` ``\>
 
-Defined in: [dependencies/marketplace-evm-ts/src/types.ts:93](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/types.ts#L93)
-
 #### Parameters
 
 ##### chainId
@@ -43,3 +37,25 @@ Defined in: [dependencies/marketplace-evm-ts/src/types.ts:93](https://github.com
 #### Returns
 
 `Promise`\<`` `0x${string}` ``\>
+
+***
+
+### waitForSubmission()?
+
+> `optional` **waitForSubmission**(`submission`, `options`): `Promise`\<[`EvmExecutionResult`](EvmExecutionResult.md)\>
+
+Reconcile a previously persisted broadcast without submitting it again.
+
+#### Parameters
+
+##### submission
+
+[`EvmExecutionSubmission`](EvmExecutionSubmission.md)
+
+##### options
+
+`Pick`\<[`EvmExecutionOptions`](EvmExecutionOptions.md), `"chainId"`\>
+
+#### Returns
+
+`Promise`\<[`EvmExecutionResult`](EvmExecutionResult.md)\>

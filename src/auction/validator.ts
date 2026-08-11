@@ -54,22 +54,21 @@ export function createEvmAuctionValidator(
         tradeId: request.auctionId,
         contractAddress: request.contractAddress,
         ...(request.contractBytecodeHash ? { contractBytecodeHash: request.contractBytecodeHash } : {}),
+        buyerAddress: request.bidderAddress,
         sellerAddress: request.sellerAddress,
         arbiterAddress: request.arbiterAddress,
         assetAddress: request.assetAddress,
-        paymentAmount: {
-          ...request.bidAmount,
-          value: request.bidAmount.value + escrowFee,
-        },
+        paymentAmount: request.bidAmount,
         ...(request.escrowFee ? { escrowFee: request.escrowFee } : {}),
-        ...(request.bidderAddress ? { timeoutClaimantAddress: request.bidderAddress } : {}),
-        ...(request.contextHash ? { contextHash: request.contextHash } : {}),
-        ...(request.recycleCovenantHash ? { recycleCovenantHash: request.recycleCovenantHash } : {}),
+        unlockAt: request.endsAt,
+        timeoutClaimantAddress: request.bidderAddress,
+        contextHash: request.contextHash,
+        recycleCovenantHash: request.recycleCovenantHash,
         ...(request.minConfirmations !== undefined ? { minConfirmations: request.minConfirmations } : {}),
       })
 
       const bid = escrowResult.funding ? fundingAsBidLog(request, escrowResult.funding) : undefined
-      const recipientMatched = request.bidderAddress && bid
+      const recipientMatched = bid
         ? bid.bidderAddress.toLowerCase() === request.bidderAddress.toLowerCase()
         : escrowResult.recipientMatched
 

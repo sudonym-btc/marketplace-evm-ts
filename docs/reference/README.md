@@ -8,6 +8,7 @@
 
 ## Classes
 
+- [MemoryOperationStore](classes/MemoryOperationStore.md)
 - [SwapAmountLimitError](classes/SwapAmountLimitError.md)
 
 ## Type Aliases
@@ -36,10 +37,12 @@
 - [EvmAuctionPaymentValidator](type-aliases/EvmAuctionPaymentValidator.md)
 - [EvmAuctionPaymentValidatorOptions](type-aliases/EvmAuctionPaymentValidatorOptions.md)
 - [EvmAuctionPolicy](type-aliases/EvmAuctionPolicy.md)
+- [EvmBoltzChainTrust](type-aliases/EvmBoltzChainTrust.md)
 - [EvmBoltzConfig](type-aliases/EvmBoltzConfig.md)
 - [EvmCall](type-aliases/EvmCall.md)
 - [EvmChainConfig](type-aliases/EvmChainConfig.md)
 - [EvmChainIndexActivity](type-aliases/EvmChainIndexActivity.md)
+- [EvmCreateInvoice](type-aliases/EvmCreateInvoice.md)
 - [EvmCreateTradeParams](type-aliases/EvmCreateTradeParams.md)
 - [EvmDiscoverHighWatermarkOptions](type-aliases/EvmDiscoverHighWatermarkOptions.md)
 - [EvmEscrowActionPlan](type-aliases/EvmEscrowActionPlan.md)
@@ -59,6 +62,7 @@
 - [EvmEscrowValidator](type-aliases/EvmEscrowValidator.md)
 - [EvmExecutionOptions](type-aliases/EvmExecutionOptions.md)
 - [EvmExecutionResult](type-aliases/EvmExecutionResult.md)
+- [EvmExecutionSubmission](type-aliases/EvmExecutionSubmission.md)
 - [EvmExecutor](type-aliases/EvmExecutor.md)
 - [EvmHash](type-aliases/EvmHash.md)
 - [EvmHex](type-aliases/EvmHex.md)
@@ -86,6 +90,11 @@
 - [EvmSmartAccountAddressResolverContext](type-aliases/EvmSmartAccountAddressResolverContext.md)
 - [EvmSwapService](type-aliases/EvmSwapService.md)
 - [EvmTradeIndexActivity](type-aliases/EvmTradeIndexActivity.md)
+- [EvmTrustedCallDecoder](type-aliases/EvmTrustedCallDecoder.md)
+- [EvmTrustedCallFunction](type-aliases/EvmTrustedCallFunction.md)
+- [EvmTrustedCallTarget](type-aliases/EvmTrustedCallTarget.md)
+- [EvmTrustedContract](type-aliases/EvmTrustedContract.md)
+- [EvmWithdrawalOptions](type-aliases/EvmWithdrawalOptions.md)
 - [EvmWithdrawParams](type-aliases/EvmWithdrawParams.md)
 - [GenericAmount](type-aliases/GenericAmount.md)
 - [GenericAuctionSettlementIntent](type-aliases/GenericAuctionSettlementIntent.md)
@@ -125,3 +134,5 @@
 - [createEvmEscrowValidator](functions/createEvmEscrowValidator.md)
 - [createEvmSwapService](functions/createEvmSwapService.md)
 - [createMarketplaceEvmClient](functions/createMarketplaceEvmClient.md)
+- [evmPayoutInvoiceDescription](functions/evmPayoutInvoiceDescription.md)
+- [evmPurchaseInvoiceDescription](functions/evmPurchaseInvoiceDescription.md)

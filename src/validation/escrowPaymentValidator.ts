@@ -1,6 +1,7 @@
 import type { Log } from 'viem'
 import { getAddress, parseEventLogs } from 'viem'
 import { multiEscrowAbi } from '@sudonym-btc/marketplace-evm-contracts'
+import { multiEscrowRuntimeBytecodeHash } from '@sudonym-btc/marketplace-evm-contracts'
 
 import type { ResolvedEvmChainConfig } from '../types.js'
 import { normalizeAddress, normalizeBytes32 } from '../utils/hex.js'
@@ -95,43 +96,59 @@ export function createEvmEscrowValidator(
         }
       }
 
+      const expectedContract = chain.multiEscrowAddress
+      if (!expectedContract) {
+        return {
+          method: 'evm',
+          status: 'unverifiable',
+          txHash: request.txHash,
+          chainId: request.chainId,
+          error: `No trusted MultiEscrow address configured for chainId ${request.chainId}`,
+        }
+      }
+      const expectedBytecodeHash = chain.multiEscrowBytecodeHash ?? multiEscrowRuntimeBytecodeHash
+      if (request.contractAddress.toLowerCase() !== expectedContract.toLowerCase()) {
+        return mismatch(request, 'Escrow contract address does not match the configured deployment')
+      }
+      if (
+        request.contractBytecodeHash
+        && request.contractBytecodeHash.toLowerCase() !== expectedBytecodeHash.toLowerCase()
+      ) {
+        return mismatch(request, 'Payment proof escrow bytecode hash does not match configured runtime')
+      }
+
       const receipt = await chain.publicClient.getTransactionReceipt({ hash: request.txHash })
       if (!receipt) return notFound(request, 'Transaction receipt not found')
       if (receipt.status !== 'success') return mismatch(request, 'Transaction reverted')
 
-      if (request.contractBytecodeHash) {
-        const bytecode = await chain.publicClient.getBytecode({ address: request.contractAddress })
-        if (!bytecode) return mismatch(request, 'Escrow contract has no runtime bytecode')
-        const bytecodeHash = await sha256Hex(bytecode)
-        if (bytecodeHash.toLowerCase() !== request.contractBytecodeHash.toLowerCase()) {
-          return mismatch(request, 'Escrow contract bytecode hash mismatch')
-        }
+      const bytecode = await chain.publicClient.getBytecode({ address: expectedContract })
+      if (!bytecode || bytecode === '0x') return mismatch(request, 'Configured escrow contract has no runtime bytecode')
+      const bytecodeHash = await sha256Hex(bytecode)
+      if (bytecodeHash.toLowerCase() !== expectedBytecodeHash.toLowerCase()) {
+        return mismatch(request, 'Configured escrow contract runtime bytecode hash mismatch')
       }
 
       const funding = decodeTradeCreated(request, receipt.logs)
       if (!funding) return mismatch(request, 'Matching TradeCreated log not found')
 
       const assetMatched = funding.assetAddress.toLowerCase() === request.assetAddress.toLowerCase()
+      const buyerMatched = funding.buyerAddress.toLowerCase() === request.buyerAddress.toLowerCase()
       const recipientMatched = funding.sellerAddress.toLowerCase() === request.sellerAddress.toLowerCase()
       const arbiterMatched = funding.arbiterAddress.toLowerCase() === request.arbiterAddress.toLowerCase()
-      const timeoutClaimantMatched = request.timeoutClaimantAddress
-        ? funding.timeoutClaimantAddress.toLowerCase() === request.timeoutClaimantAddress.toLowerCase()
-        : true
-      const unlockAtMatched = request.unlockAt !== undefined
-        ? funding.unlockAt === request.unlockAt
-        : true
-      const contextMatched = request.contextHash
-        ? funding.contextHash.toLowerCase() === request.contextHash.toLowerCase()
-        : true
-      const recycleCovenantMatched = request.recycleCovenantHash
-        ? funding.recycleCovenantHash.toLowerCase() === request.recycleCovenantHash.toLowerCase()
-        : true
+      const timeoutClaimantMatched =
+        funding.timeoutClaimantAddress.toLowerCase() === request.timeoutClaimantAddress.toLowerCase()
+      const unlockAtMatched = funding.unlockAt === request.unlockAt
+      const contextMatched = funding.contextHash.toLowerCase() === request.contextHash.toLowerCase()
+      const recycleCovenantMatched =
+        funding.recycleCovenantHash.toLowerCase() === request.recycleCovenantHash.toLowerCase()
+      const expectedEscrowFee = request.escrowFee?.value ?? 0n
       const amountMatched =
-        funding.paymentAmount >= request.paymentAmount.value &&
-        funding.bondAmount >= (request.bondAmount?.value ?? 0n) &&
-        funding.escrowFee >= (request.escrowFee?.value ?? 0n)
+        funding.paymentAmount === request.paymentAmount.value + expectedEscrowFee &&
+        funding.bondAmount === (request.bondAmount?.value ?? 0n) &&
+        funding.escrowFee === expectedEscrowFee
 
       if (!assetMatched) return mismatch(request, 'Escrow asset mismatch', funding)
+      if (!buyerMatched) return mismatch(request, 'Escrow buyer address mismatch', funding)
       if (!recipientMatched) return mismatch(request, 'Escrow seller address mismatch', funding)
       if (!arbiterMatched) return mismatch(request, 'Arbiter address mismatch', funding)
       if (!timeoutClaimantMatched) return mismatch(request, 'Escrow timeout claimant mismatch', funding)

@@ -22,4 +22,8 @@ export type AaExecutor = {
   getSmartAccountAddress(): Promise<EvmAddress>
   estimateGas(calls: EvmCall[]): Promise<AaGasEstimate>
   execute(calls: NamedEvmCall[], options: EvmExecutionOptions): Promise<EvmExecutionResult>
+  waitForSubmission(
+    submission: import('../types.js').EvmExecutionSubmission,
+    options: Pick<EvmExecutionOptions, 'chainId'>,
+  ): Promise<EvmExecutionResult>
 }

@@ -13,16 +13,17 @@ export type EvmEscrowPaymentValidationRequest = {
   tradeId: string
   contractAddress: EvmAddress
   contractBytecodeHash?: EvmHex
+  buyerAddress: EvmAddress
   sellerAddress: EvmAddress
   arbiterAddress: EvmAddress
   assetAddress: EvmAddress
   paymentAmount: EvmAmount
   bondAmount?: EvmAmount
-  unlockAt?: bigint
-  timeoutClaimantAddress?: EvmAddress
+  unlockAt: bigint
+  timeoutClaimantAddress: EvmAddress
   escrowFee?: EvmAmount
-  contextHash?: EvmHex
-  recycleCovenantHash?: EvmHex
+  contextHash: EvmHex
+  recycleCovenantHash: EvmHex
   minConfirmations?: number
 }
 

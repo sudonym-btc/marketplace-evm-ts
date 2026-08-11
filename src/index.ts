@@ -11,6 +11,7 @@ export { createEvmAuctionPolicy } from './marketplace/auctionPolicy.js'
 export { createEvmEscrowPolicy } from './marketplace/escrowPolicy.js'
 export { evmPayoutInvoiceDescription, evmPurchaseInvoiceDescription } from './marketplace/invoices.js'
 export { createEvmSwapService, SwapAmountLimitError } from './swaps/service.js'
+export { MemoryOperationStore } from './utils/store.js'
 
 export type { MarketplaceEvmClient } from './client.js'
 export type { EvmAccountDerivationOptions, EvmAccountManager } from './accounts.js'
@@ -85,11 +86,17 @@ export type {
   EvmAmount,
   EvmAsset,
   EvmBoltzConfig,
+  EvmBoltzChainTrust,
   EvmCall,
   EvmChainConfig,
   EvmExecutionOptions,
+  EvmExecutionSubmission,
   EvmExecutionResult,
   EvmExecutor,
+  EvmTrustedCallDecoder,
+  EvmTrustedCallFunction,
+  EvmTrustedCallTarget,
+  EvmTrustedContract,
   EvmHash,
   EvmHex,
   EvmOperationQuery,

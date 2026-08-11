@@ -69,12 +69,34 @@ const result = await evm.escrow.validate({
   txHash,
   tradeId,
   contractAddress,
+  contractBytecodeHash,
+  buyerAddress,
   sellerAddress,
   arbiterAddress,
   assetAddress,
   paymentAmount,
+  bondAmount,
+  unlockAt,
+  timeoutClaimantAddress,
+  escrowFee,
+  contextHash,
+  recycleCovenantHash,
 })
 ```
+
+Every chain must pin `multiEscrowAddress` and `multiEscrowBytecodeHash`.
+Boltz-enabled clients must also provide `boltz.trustByChainId`; routed swaps
+require runtime-pinned targets with a supported semantic decoder. The local
+test stack writes authoritative development values under
+`chains.*.boltzTrust` in `data/config/marketplace-evm-stack.json`.
+
+Use a durable operation store with atomic `putIfAbsent` in production. Stored
+records contain only public recovery fields, exact recovery call plans, hashes,
+and allowlisted provider status summaries. They do not contain seeds,
+preimages, BOLT11 invoice plaintext, opaque provider responses, or provider
+error bodies. Broadcast transaction/user-operation hashes are persisted before
+receipt waits so retries reconcile the original submission instead of sending a
+replacement.
 
 Read the generated [API reference](reference/README.md) for exported types,
 call builders, policy helpers, and validation contracts.

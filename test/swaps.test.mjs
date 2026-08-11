@@ -5,8 +5,39 @@ import { SwapAmountLimitError, createEvmSwapService } from '../dist/index.js'
 import { btcAmountToSats } from '../dist/swaps/amounts.js'
 import { deriveEvmSwapMaterial } from '../dist/seed.js'
 import { MemoryOperationStore } from '../dist/utils/store.js'
+import { encodeAbiParameters, encodeFunctionData, parseAbi, toFunctionSelector } from 'viem'
 
 const seed = '8'.repeat(64)
+const swapContract = '0x0000000000000000000000000000000000000010'
+const routerContract = '0x0000000000000000000000000000000000000d0e'
+const runtimeHash = '0xf3df0a62b10f205b0f29768aa3d69e777154caaa179f64aabb0a4899c666b017'
+const swapAbi = parseAbi(['function swap(address tokenIn,address tokenOut,address recipient,uint256 amountIn,uint256 amountOutMin)'])
+const swapSelector = toFunctionSelector('swap(address,address,address,uint256,uint256)')
+const testInvoice = 'lnbc1qqqqqqqpp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq2xy284'
+
+function persistedJson(value) {
+  return JSON.stringify(value, (_key, item) => typeof item === 'bigint' ? item.toString() : item)
+}
+
+function createTestSwapService(options) {
+  return createEvmSwapService({
+    ...options,
+    chains: [{
+      chainId: 42161,
+      publicClient: { async getBytecode() { return '0x6000' } },
+    }],
+    trustByChainId: {
+      42161: {
+        erc20Swap: { address: swapContract, runtimeBytecodeHash: runtimeHash },
+        dexCallTargets: [{
+          address: routerContract,
+          runtimeBytecodeHash: runtimeHash,
+          functions: [{ selector: swapSelector, decoder: 'exact-input-v1' }],
+        }],
+      },
+    },
+  })
+}
 
 const accounts = {
   ownerAccount() {
@@ -61,6 +92,7 @@ function boltzStub(overrides = {}) {
         id: 'reverse-1',
         invoice: 'lnbc1reverse',
         onchainAmount: 50_000,
+        lockupAddress: swapContract,
         refundAddress: '0x00000000000000000000000000000000000000f1',
         timeoutBlockHeight: 123,
       }
@@ -72,7 +104,7 @@ function boltzStub(overrides = {}) {
         id: 'submarine-1',
         expectedAmount: 49_000,
         claimAddress: '0x00000000000000000000000000000000000000c1',
-        address: '0x0000000000000000000000000000000000000010',
+        address: swapContract,
         timeoutBlockHeight: 456,
       }
     },
@@ -82,7 +114,7 @@ function boltzStub(overrides = {}) {
       return {
         amountIn: 500_000_000_000_000n,
         amountOut: request.amount,
-        data: { type: 'mock-dex' },
+        data: { type: 'mock-dex', tokenIn: request.tokenIn, tokenOut: request.tokenOut },
       }
     },
 
@@ -91,18 +123,34 @@ function boltzStub(overrides = {}) {
       return {
         amountIn: request.amount,
         amountOut: 500_000_000_000_000n,
-        data: { type: 'mock-dex' },
+        data: { type: 'mock-dex', tokenIn: request.tokenIn, tokenOut: request.tokenOut },
       }
     },
 
     async encodeTokenSwap(currency, request) {
       this.encodeRequests.push({ currency, request })
-      return [{
-        name: 'DEX.0',
-        to: '0x0000000000000000000000000000000000000d0e',
-        value: 0n,
-        data: '0x1234',
-      }]
+      return [
+        {
+          name: 'ERC20.approve',
+          to: request.data.tokenIn,
+          value: 0n,
+          data: encodeFunctionData({
+            abi: parseAbi(['function approve(address spender,uint256 amount)']),
+            functionName: 'approve',
+            args: [routerContract, request.amountIn],
+          }),
+        },
+        {
+          name: 'DEX.swap',
+          to: routerContract,
+          value: 0n,
+          data: encodeFunctionData({
+            abi: swapAbi,
+            functionName: 'swap',
+            args: [request.data.tokenIn, request.data.tokenOut, request.recipient, request.amountIn, request.amountOutMin],
+          }),
+        },
+      ]
     },
 
     async getSwap(id) {
@@ -112,7 +160,10 @@ function boltzStub(overrides = {}) {
         status: 'transaction.confirmed',
         transaction: {
           id: '0x' + 'a'.repeat(64),
+          hex: 'provider-opaque-transaction-secret',
         },
+        error: 'provider-opaque-error-secret',
+        unknownExtension: { secret: 'provider-opaque-extension-secret' },
       }
     },
 
@@ -127,7 +178,7 @@ function boltzStub(overrides = {}) {
 test('swap-in persists the Boltz reverse swap and can be resumed from storage', async () => {
   const boltz = boltzStub()
   const store = new MemoryOperationStore()
-  const service = createEvmSwapService({ boltz, store, seed, accounts, now: () => 100 })
+  const service = createTestSwapService({ boltz, store, seed, accounts, now: () => 100 })
   const material = deriveEvmSwapMaterial(seed, {
     tradeIndex: 2,
     chainId: 42161,
@@ -171,54 +222,7 @@ test('swap-in persists the Boltz reverse swap and can be resumed from storage', 
   assert.equal(result.preimage, material.preimage)
   assert.equal(result.preimageHash, material.preimageHash)
 
-  const stored = await store.get(material.operationId)
-  assert.equal(stored.swapId, 'reverse-1')
-  assert.equal(stored.status, 'external_payment_required')
-  assert.equal(stored.data.invoice, 'lnbc1reverse')
-  assert.equal(stored.data.refundAddress, '0x00000000000000000000000000000000000000f1')
-  assert.equal('preimage' in stored.data.request, false)
-  assert.equal(stored.data.request.preimageHash, material.preimageHash)
-
-  const resumed = await service.resume(material.operationId)
-  assert.equal(resumed.latestStatus.status, 'transaction.confirmed')
-  assert.equal(resumed.operation.data.latestStatus.transaction.id, '0x' + 'a'.repeat(64))
-  assert.deepEqual(boltz.statusRequests, ['reverse-1'])
-
-  const active = await service.listActive()
-  assert.deepEqual(active.map(record => record.id), [material.operationId])
-})
-
-test('swap-in skips to the next deterministic attempt on Boltz duplicate preimage hash', async () => {
-  const duplicateError = new Error('Boltz API 400: {"error":"a swap with this preimage hash exists already"}')
-  const boltz = boltzStub({
-    async createReverseSwap(request) {
-      this.reverseRequests.push(request)
-      if (this.reverseRequests.length === 1) throw duplicateError
-      return {
-        id: 'reverse-2',
-        invoice: 'lnbc1retry',
-        onchainAmount: 50_000,
-        refundAddress: '0x00000000000000000000000000000000000000f2',
-        timeoutBlockHeight: 124,
-      }
-    },
-  })
-  const store = new MemoryOperationStore()
-  const service = createEvmSwapService({ boltz, store, seed, accounts, now: () => 125 })
-  const firstAttempt = deriveEvmSwapMaterial(seed, {
-    tradeIndex: 2,
-    chainId: 42161,
-    direction: 'swap-in',
-    attemptIndex: 0,
-  })
-  const secondAttempt = deriveEvmSwapMaterial(seed, {
-    tradeIndex: 2,
-    chainId: 42161,
-    direction: 'swap-in',
-    attemptIndex: 1,
-  })
-
-  const result = await service.swapIn({
+  const retried = await service.swapIn({
     tradeIndex: 2,
     attemptIndex: 0,
     chainId: 42161,
@@ -227,20 +231,80 @@ test('swap-in skips to the next deterministic attempt on Boltz duplicate preimag
     amount: { value: 50_000n, denomination: 'tBTC', decimals: 8 },
     boltzAmountSats: 50_000,
   })
+  assert.equal(retried.type, 'external_payment_required')
+  assert.equal(retried.swapId, result.swapId)
+  assert.equal(boltz.reverseRequests.length, 1)
 
-  assert.equal(result.type, 'external_payment_required')
-  assert.equal(result.swapId, 'reverse-2')
-  assert.equal(result.invoice, 'lnbc1retry')
-  assert.equal(result.preimageHash, secondAttempt.preimageHash)
-  assert.equal(boltz.reverseRequests.length, 2)
+  const stored = await store.get(material.operationId)
+  assert.equal(stored.swapId, 'reverse-1')
+  assert.equal(stored.status, 'external_payment_required')
+  assert.equal('invoice' in stored.data, false)
+  assert.equal(stored.data.refundAddress, '0x00000000000000000000000000000000000000f1')
+  assert.equal('preimage' in stored.data.request, false)
+  assert.equal('preimageHash' in stored.data.request, false)
+  assert.equal(persistedJson(stored).includes(material.preimage), false)
+  assert.equal(persistedJson(stored).includes('lnbc1reverse'), false)
+
+  const resumed = await service.resume(material.operationId)
+  assert.equal(resumed.latestStatus.status, 'transaction.confirmed')
+  assert.deepEqual(resumed.operation.data.providerStatus, {
+    status: 'transaction.confirmed',
+    id: 'reverse-1',
+    transactionHash: '0x' + 'a'.repeat(64),
+  })
+  assert.equal('latestStatus' in resumed.operation.data, false)
+  assert.equal(persistedJson(resumed.operation).includes('provider-opaque'), false)
+  assert.deepEqual(boltz.statusRequests, ['reverse-1'])
+
+  const restarted = createTestSwapService({ boltz, store, seed, accounts, now: () => 101 })
+  await assert.rejects(() => restarted.swapIn({
+    tradeIndex: 2,
+    attemptIndex: 0,
+    chainId: 42161,
+    boltzCurrency: 'tBTC',
+    lightningCurrency: 'BTC',
+    amount: { value: 50_000n, denomination: 'tBTC', decimals: 8 },
+    boltzAmountSats: 50_000,
+  }), /invoice is intentionally not persisted/)
+  assert.equal(boltz.reverseRequests.length, 1)
+
+  const active = await service.listActive()
+  assert.deepEqual(active.map(record => record.id), [material.operationId])
+})
+
+test('swap-in fails closed instead of creating a parallel swap on duplicate preimage hash', async () => {
+  const duplicateError = new Error('Boltz API 400: {"error":"a swap with this preimage hash exists already"}')
+  const boltz = boltzStub({
+    async createReverseSwap(request) {
+      this.reverseRequests.push(request)
+      throw duplicateError
+    },
+  })
+  const store = new MemoryOperationStore()
+  const service = createTestSwapService({ boltz, store, seed, accounts, now: () => 125 })
+  const firstAttempt = deriveEvmSwapMaterial(seed, {
+    tradeIndex: 2,
+    chainId: 42161,
+    direction: 'swap-in',
+    attemptIndex: 0,
+  })
+  await assert.rejects(() => service.swapIn({
+    tradeIndex: 2,
+    attemptIndex: 0,
+    chainId: 42161,
+    boltzCurrency: 'tBTC',
+    lightningCurrency: 'BTC',
+    amount: { value: 50_000n, denomination: 'tBTC', decimals: 8 },
+    boltzAmountSats: 50_000,
+  }), /refusing to create a parallel swap/)
+
+  assert.equal(boltz.reverseRequests.length, 1)
   assert.equal(boltz.reverseRequests[0].preimageHash, firstAttempt.preimageHash)
-  assert.equal(boltz.reverseRequests[1].preimageHash, secondAttempt.preimageHash)
-  assert.equal(await store.get(firstAttempt.operationId), null)
-
-  const stored = await store.get(secondAttempt.operationId)
-  assert.equal(stored.swapId, 'reverse-2')
-  assert.equal(stored.data.request.attemptIndex, 1)
-  assert.equal(stored.data.request.preimageHash, secondAttempt.preimageHash)
+  const stored = await store.get(firstAttempt.operationId)
+  assert.equal(stored.status, 'failed')
+  assert.equal(stored.data.creationAmbiguous, true)
+  assert.equal(stored.error, 'Boltz reports this deterministic preimage hash already exists; refusing to create a parallel swap')
+  assert.equal(persistedJson(stored).includes(duplicateError.message), false)
 })
 
 test('swap-in only retries the exact duplicate-preimage Boltz error', async () => {
@@ -250,7 +314,7 @@ test('swap-in only retries the exact duplicate-preimage Boltz error', async () =
       throw new Error('Boltz API 400: {"error":"a swap with this preimage hash exists already."}')
     },
   })
-  const service = createEvmSwapService({
+  const service = createTestSwapService({
     boltz,
     store: new MemoryOperationStore(),
     seed,
@@ -269,14 +333,14 @@ test('swap-in only retries the exact duplicate-preimage Boltz error', async () =
         amount: { value: 50_000n, denomination: 'tBTC', decimals: 8 },
         boltzAmountSats: 50_000,
       }),
-    /preimage hash exists already\./,
+    /Unable to safely create Boltz swap-in|preimage hash exists already/,
   )
   assert.equal(boltz.reverseRequests.length, 1)
 })
 
 test('swap-in converts BTC-denominated EVM base units to Boltz satoshis', async () => {
   const boltz = boltzStub()
-  const service = createEvmSwapService({
+  const service = createTestSwapService({
     boltz,
     store: new MemoryOperationStore(),
     seed,
@@ -299,7 +363,7 @@ test('swap-in converts BTC-denominated EVM base units to Boltz satoshis', async 
 
 test('swap-in rejects amounts below Boltz reverse swap limits before creating a swap', async () => {
   const boltz = boltzStub()
-  const service = createEvmSwapService({
+  const service = createTestSwapService({
     boltz,
     store: new MemoryOperationStore(),
     seed,
@@ -327,9 +391,28 @@ test('swap-in rejects amounts below Boltz reverse swap limits before creating a 
   assert.equal(boltz.reverseRequests.length, 0)
 })
 
-test('swap-in rejects unsupported Boltz pairs before amount conversion', async () => {
+test('swap-in performs no provider side effect when chain trust roots are missing', async () => {
   const boltz = boltzStub()
   const service = createEvmSwapService({
+    boltz,
+    store: new MemoryOperationStore(),
+    seed,
+    accounts,
+    chains: [{ chainId: 42161, publicClient: { async getBytecode() { return '0x6000' } } }],
+  })
+  await assert.rejects(() => service.swapIn({
+    tradeIndex: 9,
+    attemptIndex: 0,
+    chainId: 42161,
+    boltzCurrency: 'tBTC',
+    amount: { value: 50_000n, denomination: 'tBTC', decimals: 8 },
+  }), /No Boltz trust roots configured/)
+  assert.equal(boltz.reverseRequests.length, 0)
+})
+
+test('swap-in rejects unsupported Boltz pairs before amount conversion', async () => {
+  const boltz = boltzStub()
+  const service = createTestSwapService({
     boltz,
     store: new MemoryOperationStore(),
     seed,
@@ -360,7 +443,7 @@ test('swap-in rejects unsupported Boltz pairs before amount conversion', async (
 test('swap-in routes stablecoin funding through tBTC DEX calls before post-claim escrow calls', async () => {
   const boltz = boltzStub()
   const store = new MemoryOperationStore()
-  const service = createEvmSwapService({ boltz, store, seed, accounts, now: () => 175 })
+  const service = createTestSwapService({ boltz, store, seed, accounts, now: () => 175 })
   const escrowCall = {
     name: 'Escrow.createTrade',
     to: '0x0000000000000000000000000000000000000e50',
@@ -401,32 +484,182 @@ test('swap-in routes stablecoin funding through tBTC DEX calls before post-claim
       recipient: '0x000000000000000000000000000000000000c102',
       amountIn: 500_000_000_000_000n,
       amountOutMin: 225_000_000n,
-      data: { type: 'mock-dex' },
+      data: {
+        type: 'mock-dex',
+        tokenIn: '0x0000000000000000000000000000000000000b7c',
+        tokenOut: '0x00000000000000000000000000000000000000ad',
+      },
     },
   }])
   assert.equal(boltz.reverseRequests[0].to, 'tBTC')
   assert.equal(boltz.reverseRequests[0].onchainAmount, 50_000)
-  assert.deepEqual(result.postClaimCalls, [
-    {
-      name: 'DEX.0',
-      to: '0x0000000000000000000000000000000000000d0e',
-      value: 0n,
-      data: '0x1234',
-    },
-    escrowCall,
-  ])
+  assert.deepEqual(result.postClaimCalls.map(call => call.name), ['ERC20.approve', 'DEX.swap', escrowCall.name])
 
   const stored = await store.get(result.operation.id)
   assert.equal(stored.data.claimAssetAddress, '0x0000000000000000000000000000000000000b7c')
-  assert.equal(stored.data.targetBoltzCurrency, 'USDT')
-  assert.deepEqual(stored.data.routeQuote, {
-    quoteCurrency: 'ARB',
-    tokenIn: '0x0000000000000000000000000000000000000b7c',
-    tokenOut: '0x00000000000000000000000000000000000000ad',
-    amountIn: '500000000000000',
-    amountOut: '225000000',
+  assert.deepEqual(stored.data.request, {
+    tradeIndex: 2,
+    attemptIndex: 0,
+    chainId: 42161,
+    assetAddress: '0x00000000000000000000000000000000000000ad',
   })
-  assert.equal(stored.data.postClaimCalls.length, 2)
+  assert.equal(stored.data.postClaimCalls.length, 3)
+})
+
+test('routed swap trust is verified before provider quote or encoding calls', async () => {
+  const boltz = boltzStub()
+  const service = createEvmSwapService({
+    boltz,
+    store: new MemoryOperationStore(),
+    seed,
+    accounts,
+    chains: [{
+      chainId: 42161,
+      publicClient: {
+        async getBytecode({ address }) {
+          return address.toLowerCase() === routerContract.toLowerCase() ? '0x6001' : '0x6000'
+        },
+      },
+    }],
+    trustByChainId: {
+      42161: {
+        erc20Swap: { address: swapContract, runtimeBytecodeHash: runtimeHash },
+        dexCallTargets: [{
+          address: routerContract,
+          runtimeBytecodeHash: runtimeHash,
+          functions: [{ selector: swapSelector, decoder: 'exact-input-v1' }],
+        }],
+      },
+    },
+  })
+
+  await assert.rejects(() => service.swapIn({
+    tradeIndex: 11,
+    attemptIndex: 0,
+    chainId: 42161,
+    boltzCurrency: 'USDT',
+    assetAddress: '0x00000000000000000000000000000000000000ad',
+    amount: { value: 225_000_000n, denomination: 'USD', decimals: 6 },
+    routeVia: {
+      boltzCurrency: 'tBTC',
+      assetAddress: '0x0000000000000000000000000000000000000b7c',
+      decimals: 18,
+      quoteCurrency: 'ARB',
+    },
+  }), /runtime bytecode hash mismatch/)
+  assert.equal(boltz.quoteOutRequests.length, 0)
+  assert.equal(boltz.encodeRequests.length, 0)
+  assert.equal(boltz.reverseRequests.length, 0)
+})
+
+test('swap-in rejects provider calls to an untrusted DEX target before creating a swap', async () => {
+  const boltz = boltzStub({
+    async encodeTokenSwap(_currency, request) {
+      return [{
+        name: 'malicious',
+        to: '0x0000000000000000000000000000000000000bad',
+        data: encodeFunctionData({
+          abi: swapAbi,
+          functionName: 'swap',
+          args: [request.data.tokenIn, request.data.tokenOut, request.recipient, request.amountIn, request.amountOutMin],
+        }),
+      }]
+    },
+  })
+  const service = createTestSwapService({ boltz, store: new MemoryOperationStore(), seed, accounts })
+  await assert.rejects(() => service.swapIn({
+    tradeIndex: 7,
+    attemptIndex: 0,
+    chainId: 42161,
+    boltzCurrency: 'USDT',
+    assetAddress: '0x00000000000000000000000000000000000000ad',
+    amount: { value: 225_000_000n, denomination: 'USD', decimals: 6 },
+    routeVia: {
+      boltzCurrency: 'tBTC',
+      assetAddress: '0x0000000000000000000000000000000000000b7c',
+      decimals: 18,
+      quoteCurrency: 'ARB',
+    },
+  }), /not allowlisted|missing an exact ERC-20 input approval/)
+  assert.equal(boltz.reverseRequests.length, 0)
+})
+
+test('DEX validation ignores irrelevant expected words and rejects malicious decoded arguments', async () => {
+  const tokenIn = '0x0000000000000000000000000000000000000b7c'
+  const tokenOut = '0x00000000000000000000000000000000000000ad'
+  const boltz = boltzStub({
+    async encodeTokenSwap(_currency, request) {
+      const approval = encodeFunctionData({
+        abi: parseAbi(['function approve(address spender,uint256 amount)']),
+        functionName: 'approve',
+        args: [routerContract, request.amountIn],
+      })
+      const malicious = encodeFunctionData({
+        abi: swapAbi,
+        functionName: 'swap',
+        args: [
+          '0x0000000000000000000000000000000000000bad',
+          '0x0000000000000000000000000000000000000bee',
+          '0x0000000000000000000000000000000000000def',
+          1n,
+          1n,
+        ],
+      })
+      const irrelevantExpectedWords = encodeAbiParameters(
+        [{ type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'uint256' }, { type: 'uint256' }],
+        [tokenIn, tokenOut, request.recipient, request.amountIn, request.amountOutMin],
+      )
+      return [
+        { name: 'ERC20.approve', to: tokenIn, data: approval },
+        { name: 'DEX.swap', to: routerContract, data: `${malicious}${irrelevantExpectedWords.slice(2)}` },
+      ]
+    },
+  })
+  const service = createTestSwapService({ boltz, store: new MemoryOperationStore(), seed, accounts })
+  await assert.rejects(() => service.swapIn({
+    tradeIndex: 10,
+    attemptIndex: 0,
+    chainId: 42161,
+    boltzCurrency: 'USDT',
+    assetAddress: tokenOut,
+    amount: { value: 225_000_000n, denomination: 'USD', decimals: 6 },
+    routeVia: { boltzCurrency: 'tBTC', assetAddress: tokenIn, decimals: 18, quoteCurrency: 'ARB' },
+  }), /input token does not match quote/)
+  assert.equal(boltz.reverseRequests.length, 0)
+})
+
+test('swap-in refuses to expose a preimage for an untrusted swap contract', async () => {
+  const boltz = boltzStub({
+    async createReverseSwap(request) {
+      this.reverseRequests.push(request)
+      return {
+        id: 'malicious-reverse',
+        invoice: 'lnbc1malicious',
+        onchainAmount: 50_000,
+        lockupAddress: '0x0000000000000000000000000000000000000bad',
+        refundAddress: '0x00000000000000000000000000000000000000f1',
+        timeoutBlockHeight: 123,
+      }
+    },
+  })
+  const store = new MemoryOperationStore()
+  const service = createTestSwapService({ boltz, store, seed, accounts })
+  await assert.rejects(() => service.swapIn({
+    tradeIndex: 8,
+    attemptIndex: 0,
+    chainId: 42161,
+    boltzCurrency: 'tBTC',
+    amount: { value: 50_000n, denomination: 'tBTC', decimals: 8 },
+  }), error => {
+    assert.equal(error.message, 'Unable to safely create Boltz swap-in')
+    assert.match(error.cause?.message ?? '', /does not match the configured ERC20Swap deployment/)
+    return true
+  })
+  const [record] = await store.list({ kind: 'swap_in' })
+  assert.equal(record.status, 'failed')
+  assert.equal(record.swapId, 'malicious-reverse')
+  assert.equal(record.error, 'Unable to safely create Boltz swap-in')
+  assert.equal(persistedJson(record).includes('does not match the configured ERC20Swap deployment'), false)
 })
 
 test('converts BTC-like EVM amounts to sats with upward rounding', () => {
@@ -439,7 +672,7 @@ test('converts BTC-like EVM amounts to sats with upward rounding', () => {
 test('swap-out stores invoice-required state before creating a Boltz swap', async () => {
   const boltz = boltzStub()
   const store = new MemoryOperationStore()
-  const service = createEvmSwapService({ boltz, store, seed, accounts, now: () => 200 })
+  const service = createTestSwapService({ boltz, store, seed, accounts, now: () => 200 })
   const material = deriveEvmSwapMaterial(seed, {
     tradeIndex: 3,
     chainId: 42161,
@@ -463,14 +696,14 @@ test('swap-out stores invoice-required state before creating a Boltz swap', asyn
 
   const stored = await store.get(material.operationId)
   assert.equal(stored.status, 'external_invoice_required')
-  assert.equal(stored.data.request.invoiceDescription, 'order payment')
+  assert.deepEqual(stored.data.request, { tradeIndex: 3, attemptIndex: 0, chainId: 42161 })
   assert.equal(stored.data.invoiceAmountSats, 59_907)
 })
 
 test('swap-out persists the Boltz submarine swap and resumes status by swap id', async () => {
   const boltz = boltzStub()
   const store = new MemoryOperationStore()
-  const service = createEvmSwapService({ boltz, store, seed, accounts, now: () => 300 })
+  const service = createTestSwapService({ boltz, store, seed, accounts, now: () => 300 })
   const material = deriveEvmSwapMaterial(seed, {
     tradeIndex: 4,
     chainId: 42161,
@@ -484,7 +717,7 @@ test('swap-out persists the Boltz submarine swap and resumes status by swap id',
     chainId: 42161,
     boltzCurrency: 'tBTC',
     lightningCurrency: 'BTC',
-    invoice: 'lnbc1submarine',
+    invoice: testInvoice,
   })
 
   assert.equal(result.type, 'awaiting_resolution')
@@ -496,7 +729,7 @@ test('swap-out persists the Boltz submarine swap and resumes status by swap id',
   assert.deepEqual(boltz.submarineRequests[0], {
     from: 'tBTC',
     to: 'BTC',
-    invoice: 'lnbc1submarine',
+    invoice: testInvoice,
     pairHash: 'submarine-pair-hash',
   })
 
@@ -504,6 +737,7 @@ test('swap-out persists the Boltz submarine swap and resumes status by swap id',
   assert.equal(stored.swapId, 'submarine-1')
   assert.equal(stored.status, 'awaiting_onchain')
   assert.equal(stored.data.expectedAmount, 49_000)
+  assert.equal(persistedJson(stored).includes(testInvoice), false)
 
   const resumed = await service.resume(material.operationId)
   assert.equal(resumed.latestStatus.status, 'transaction.confirmed')
@@ -513,7 +747,7 @@ test('swap-out persists the Boltz submarine swap and resumes status by swap id',
 test('swap-out routes stablecoin balance through DEX calls before the Boltz lock', async () => {
   const boltz = boltzStub()
   const store = new MemoryOperationStore()
-  const service = createEvmSwapService({ boltz, store, seed, accounts, now: () => 325 })
+  const service = createTestSwapService({ boltz, store, seed, accounts, now: () => 325 })
   const withdrawCall = {
     name: 'MultiEscrow.withdraw',
     to: '0x0000000000000000000000000000000000000e50',
@@ -529,7 +763,7 @@ test('swap-out routes stablecoin balance through DEX calls before the Boltz lock
     lightningCurrency: 'BTC',
     assetAddress: '0x00000000000000000000000000000000000000ad',
     amount: { value: 225_000_000n, denomination: 'USD', decimals: 6 },
-    invoice: 'lnbc1submarine',
+    invoice: testInvoice,
     routeVia: {
       boltzCurrency: 'tBTC',
       assetAddress: '0x0000000000000000000000000000000000000b7c',
@@ -555,40 +789,35 @@ test('swap-out routes stablecoin balance through DEX calls before the Boltz lock
       recipient: '0x000000000000000000000000000000000000c105',
       amountIn: 225_000_000n,
       amountOutMin: 500_000_000_000_000n,
-      data: { type: 'mock-dex' },
+      data: {
+        type: 'mock-dex',
+        tokenIn: '0x00000000000000000000000000000000000000ad',
+        tokenOut: '0x0000000000000000000000000000000000000b7c',
+      },
     },
   }])
   assert.deepEqual(boltz.submarineRequests[0], {
     from: 'tBTC',
     to: 'BTC',
-    invoice: 'lnbc1submarine',
+    invoice: testInvoice,
     pairHash: 'submarine-pair-hash',
   })
-  assert.deepEqual(result.preLockCalls, [
-    withdrawCall,
-    {
-      name: 'DEX.0',
-      to: '0x0000000000000000000000000000000000000d0e',
-      value: 0n,
-      data: '0x1234',
-    },
-  ])
+  assert.deepEqual(result.preLockCalls.map(call => call.name), [withdrawCall.name, 'ERC20.approve', 'DEX.swap'])
 
   const stored = await store.get(result.operation.id)
   assert.equal(stored.data.lockAssetAddress, '0x0000000000000000000000000000000000000b7c')
-  assert.equal(stored.data.sourceBoltzCurrency, 'USDT')
-  assert.deepEqual(stored.data.routeQuote, {
-    quoteCurrency: 'ARB',
-    tokenIn: '0x00000000000000000000000000000000000000ad',
-    tokenOut: '0x0000000000000000000000000000000000000b7c',
-    amountIn: '225000000',
-    amountOut: '500000000000000',
+  assert.deepEqual(stored.data.request, {
+    tradeIndex: 5,
+    attemptIndex: 0,
+    chainId: 42161,
+    assetAddress: '0x00000000000000000000000000000000000000ad',
   })
-  assert.equal(stored.data.preLockCalls.length, 2)
+  assert.equal(stored.data.preLockCalls.length, 3)
+  assert.equal(persistedJson(stored).includes(testInvoice), false)
 })
 
 test('resuming a missing swap fails loudly', async () => {
-  const service = createEvmSwapService({
+  const service = createTestSwapService({
     boltz: boltzStub(),
     store: new MemoryOperationStore(),
     seed,

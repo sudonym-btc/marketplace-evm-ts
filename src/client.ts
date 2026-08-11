@@ -54,12 +54,15 @@ export function createMarketplaceEvmClient(options: MarketplaceEvmClientOptions)
   const boltz = options.boltz
     ? createBoltzRestClient({ apiUrl: options.boltz.apiUrl })
     : undefined
+  const boltzTrustByChainId = options.boltz?.trustByChainId
   const swaps = boltz
     ? createEvmSwapService({
         boltz,
         store: options.operationStore,
         seed: options.seed!,
         accounts: accounts!,
+        chains,
+        ...(boltzTrustByChainId ? { trustByChainId: boltzTrustByChainId } : {}),
         ...(options.now ? { now: options.now } : {}),
         ...(options.logger ? { logger: options.logger } : {}),
       })

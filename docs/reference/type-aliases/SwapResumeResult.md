@@ -2,15 +2,19 @@
 
 > **SwapResumeResult** = `object`
 
-Defined in: [dependencies/marketplace-evm-ts/src/swaps/types.ts:99](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/swaps/types.ts#L99)
-
 ## Properties
+
+### cooperativeRefundSignature?
+
+> `optional` **cooperativeRefundSignature?**: [`EvmHex`](EvmHex.md)
+
+Provider signature for an early cooperative refund; never persisted.
+
+***
 
 ### latestStatus?
 
 > `optional` **latestStatus?**: [`BoltzStatusUpdate`](BoltzStatusUpdate.md)
-
-Defined in: [dependencies/marketplace-evm-ts/src/swaps/types.ts:101](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/swaps/types.ts#L101)
 
 ***
 
@@ -18,4 +22,10 @@ Defined in: [dependencies/marketplace-evm-ts/src/swaps/types.ts:101](https://git
 
 > **operation**: [`EvmOperationRecord`](EvmOperationRecord.md)
 
-Defined in: [dependencies/marketplace-evm-ts/src/swaps/types.ts:100](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/swaps/types.ts#L100)
+***
+
+### preimage?
+
+> `optional` **preimage?**: [`EvmHex`](EvmHex.md)
+
+Returned only at completion and never persisted by the service.

@@ -2,8 +2,6 @@
 
 > **SwapOutRequest** = [`SwapAttemptRequest`](SwapAttemptRequest.md) & `object`
 
-Defined in: [dependencies/marketplace-evm-ts/src/swaps/types.ts:31](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/swaps/types.ts#L31)
-
 ## Type Declaration
 
 ### amount?
@@ -37,3 +35,23 @@ Defined in: [dependencies/marketplace-evm-ts/src/swaps/types.ts:31](https://gith
 ### preLockCalls?
 
 > `optional` **preLockCalls?**: [`NamedEvmCall`](NamedEvmCall.md)[]
+
+### routeVia?
+
+> `optional` **routeVia?**: `object`
+
+#### routeVia.assetAddress
+
+> **assetAddress**: [`EvmAddress`](EvmAddress.md)
+
+#### routeVia.boltzCurrency
+
+> **boltzCurrency**: `string`
+
+#### routeVia.decimals
+
+> **decimals**: `number`
+
+#### routeVia.quoteCurrency
+
+> **quoteCurrency**: `string`

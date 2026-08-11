@@ -24,14 +24,15 @@ export type EvmAuctionBidValidationRequest = {
   auctionId: string
   contractAddress: EvmAddress
   contractBytecodeHash?: EvmHex
-  bidderAddress?: EvmAddress
+  bidderAddress: EvmAddress
   sellerAddress: EvmAddress
   arbiterAddress: EvmAddress
   assetAddress: EvmAddress
   bidAmount: EvmAmount
   escrowFee?: EvmAmount
-  contextHash?: EvmHex
-  recycleCovenantHash?: EvmHex
+  endsAt: bigint
+  contextHash: EvmHex
+  recycleCovenantHash: EvmHex
   minConfirmations?: number
 }
 

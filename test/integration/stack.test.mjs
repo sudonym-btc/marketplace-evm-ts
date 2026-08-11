@@ -70,6 +70,8 @@ const evm = createMarketplaceEvmClient({
         decimals: asset.decimals,
       })),
       accountAbstraction: arbitrumAaConfig(config),
+      multiEscrowAddress: arbitrum.multiEscrow.address,
+      multiEscrowBytecodeHash: arbitrum.multiEscrow.runtimeBytecodeHash,
     },
   ],
   operationStore: new MemoryOperationStore(),
@@ -91,6 +93,7 @@ async function createAndValidateEscrowTrade(symbol, paymentValue) {
   const asset = arbitrum.assets[symbol]
   const tradeId = randomTradeId()
   const paymentAmount = amount(paymentValue, asset)
+  const unlockAt = BigInt(Math.floor(Date.now() / 1000) + 3600)
 
   const calls = evm.escrow.createTrade({
     tradeId,
@@ -100,7 +103,7 @@ async function createAndValidateEscrowTrade(symbol, paymentValue) {
     assetAddress: asset.address,
     paymentAmount,
     contractAddress: arbitrum.multiEscrow.address,
-    unlockAt: BigInt(Math.floor(Date.now() / 1000) + 3600),
+    unlockAt,
   })
 
   let createTradeTxHash
@@ -117,10 +120,17 @@ async function createAndValidateEscrowTrade(symbol, paymentValue) {
     tradeId,
     contractAddress: arbitrum.multiEscrow.address,
     contractBytecodeHash: await getMultiEscrowRuntimeHash(),
+    buyerAddress: buyerAccount.address,
     sellerAddress,
     arbiterAddress,
     assetAddress: asset.address,
     paymentAmount,
+    bondAmount: { ...paymentAmount, value: 0n },
+    unlockAt,
+    timeoutClaimantAddress: sellerAddress,
+    escrowFee: { ...paymentAmount, value: 0n },
+    contextHash: `0x${'0'.repeat(64)}`,
+    recycleCovenantHash: `0x${'0'.repeat(64)}`,
   })
 }
 
@@ -241,6 +251,8 @@ async function placeValidateAndPromoteAuctionBid(symbol, bidValue) {
     assetAddress: asset.address,
     bidAmount,
     escrowFee,
+    endsAt: unlockAt,
+    contextHash: zeroHash,
     recycleCovenantHash: sourceCovenantHash,
   })
   assert.equal(validation.status, 'valid')

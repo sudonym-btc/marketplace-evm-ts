@@ -26,6 +26,12 @@ export class MemoryOperationStore implements EvmOperationStore {
     this.records.set(record.id, record)
   }
 
+  async putIfAbsent(record: EvmOperationRecord): Promise<boolean> {
+    if (this.records.has(record.id)) return false
+    this.records.set(record.id, record)
+    return true
+  }
+
   async list(query: EvmOperationQuery = {}): Promise<EvmOperationRecord[]> {
     return [...this.records.values()].filter(record => matchesQuery(record, query))
   }

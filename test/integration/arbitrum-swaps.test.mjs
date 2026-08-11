@@ -55,6 +55,8 @@ function arbitrumChainConfig() {
       decimals: asset.decimals,
     })),
     accountAbstraction: arbitrumAaConfig(config),
+    multiEscrowAddress: arbitrum.multiEscrow.address,
+    multiEscrowBytecodeHash: arbitrum.multiEscrow.runtimeBytecodeHash,
   }
 }
 
@@ -86,6 +88,7 @@ function makeSeededAaEvm({ seed = randomBytes(32).toString('hex'), tradeIndex = 
     tradeIndex,
     boltz: {
       apiUrl: config.boltz.apiUrl,
+      trustByChainId: { [arbitrum.chainId]: arbitrum.boltzTrust },
     },
   })
   return { evm, store, seed, tradeIndex }
@@ -250,6 +253,7 @@ test('swap-in can bridge through tBTC, DEX into USDT, and fund a USDT escrow', {
   const arbiter = createAccount()
   const tradeId = randomTradeId()
   const paymentAmount = amount(escrowUsdtAmount, usdt)
+  const unlockAt = BigInt(Math.floor(Date.now() / 1000) + 3600)
   const calls = evm.escrow.createTrade({
     tradeId,
     buyerAddress: smartAccount,
@@ -258,7 +262,7 @@ test('swap-in can bridge through tBTC, DEX into USDT, and fund a USDT escrow', {
     assetAddress: usdt.address,
     paymentAmount,
     contractAddress: multiEscrow,
-    unlockAt: BigInt(Math.floor(Date.now() / 1000) + 3600),
+    unlockAt,
   })
 
   const createTradeTxHash = (await evm.executor.execute(calls, { chainId: arbitrum.chainId })).txHash
@@ -270,10 +274,17 @@ test('swap-in can bridge through tBTC, DEX into USDT, and fund a USDT escrow', {
     tradeId,
     contractAddress: multiEscrow,
     contractBytecodeHash: await multiEscrowRuntimeHash(),
+    buyerAddress: smartAccount,
     sellerAddress: seller.address,
     arbiterAddress: arbiter.address,
     assetAddress: usdt.address,
     paymentAmount,
+    bondAmount: { ...paymentAmount, value: 0n },
+    unlockAt,
+    timeoutClaimantAddress: seller.address,
+    escrowFee: { ...paymentAmount, value: 0n },
+    contextHash: `0x${'0'.repeat(64)}`,
+    recycleCovenantHash: `0x${'0'.repeat(64)}`,
   })
   assert.equal(validation.status, 'valid')
   assert.equal(validation.assetMatched, true)

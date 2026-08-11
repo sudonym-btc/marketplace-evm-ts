@@ -188,7 +188,7 @@ export function escrowBalance(publicClient, contractAddress, beneficiary, assetA
 function escrowDomain(config, contractAddress) {
   return {
     name: 'Nostr MultiEscrow',
-    version: '6',
+    version: '7',
     chainId: config.chains.arbitrumRegtest.chainId,
     verifyingContract: contractAddress,
   }

@@ -95,6 +95,8 @@ function chainConfig() {
       paymasterAddress: aa.paymasterAddress,
       userOperationReceiptTimeoutMs: 120_000,
     },
+    multiEscrowAddress: arbitrum.multiEscrow.address,
+    multiEscrowBytecodeHash: arbitrum.multiEscrow.runtimeBytecodeHash,
   }
 }
 
@@ -149,6 +151,7 @@ test('AA paymaster creates a USDT escrow with a zero-native-balance smart accoun
   const arbiter = createAccount()
   const tradeId = randomTradeId()
   const paymentAmount = amount(paymentValue, usdt)
+  const unlockAt = BigInt(Math.floor(Date.now() / 1000) + 3600)
   const calls = evm.escrow.createTrade({
     tradeId,
     buyerAddress: buyerSmartAccount,
@@ -157,7 +160,7 @@ test('AA paymaster creates a USDT escrow with a zero-native-balance smart accoun
     assetAddress: usdt.address,
     paymentAmount,
     contractAddress: multiEscrow,
-    unlockAt: BigInt(Math.floor(Date.now() / 1000) + 3600),
+    unlockAt,
   })
 
   const execution = await evm.executor.execute(calls, { chainId: arbitrum.chainId })
@@ -172,10 +175,17 @@ test('AA paymaster creates a USDT escrow with a zero-native-balance smart accoun
     tradeId,
     contractAddress: multiEscrow,
     contractBytecodeHash: await multiEscrowRuntimeHash(),
+    buyerAddress: buyerSmartAccount,
     sellerAddress: seller.address,
     arbiterAddress: arbiter.address,
     assetAddress: usdt.address,
     paymentAmount,
+    bondAmount: { ...paymentAmount, value: 0n },
+    unlockAt,
+    timeoutClaimantAddress: seller.address,
+    escrowFee: { ...paymentAmount, value: 0n },
+    contextHash: `0x${'0'.repeat(64)}`,
+    recycleCovenantHash: `0x${'0'.repeat(64)}`,
   })
   assert.equal(validation.status, 'valid')
   assert.equal(await assetBalance(publicClient, usdt.address, buyerSmartAccount), 0n)

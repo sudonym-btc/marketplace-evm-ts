@@ -30,6 +30,7 @@ export function createEoaExecutor(options: EoaExecutorOptions): EvmExecutor {
           data: call.data,
           value: call.value,
         })
+        await executionOptions.onSubmitted?.({ txHash })
         if (executionOptions.waitForReceipt !== false) {
           const receipt = await options.chain.publicClient.waitForTransactionReceipt({ hash: txHash })
           if (receipt.status !== 'success') throw new Error(`${call.name} reverted: ${txHash}`)
@@ -38,6 +39,16 @@ export function createEoaExecutor(options: EoaExecutorOptions): EvmExecutor {
       if (!txHash) throw new Error('Cannot execute an empty EVM call batch')
       return {
         txHash,
+        accountAddress: options.account.address,
+        gasSponsored: false,
+      }
+    },
+    async waitForSubmission(submission) {
+      if (!submission.txHash) throw new Error('EOA reconciliation requires a transaction hash')
+      const receipt = await options.chain.publicClient.waitForTransactionReceipt({ hash: submission.txHash })
+      if (receipt.status !== 'success') throw new Error(`EOA transaction reverted: ${submission.txHash}`)
+      return {
+        txHash: submission.txHash,
         accountAddress: options.account.address,
         gasSponsored: false,
       }

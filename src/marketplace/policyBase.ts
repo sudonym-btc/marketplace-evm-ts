@@ -64,7 +64,7 @@ export abstract class EvmMarketplacePolicyBase<
   Family
 > {
   protected readonly chains: ResolvedEvmMarketplaceChainConfig[]
-  private readonly operationStore: EvmMarketplacePolicyOptions['operationStore']
+  protected readonly operationStore: EvmMarketplacePolicyOptions['operationStore']
   private readonly withdrawals: EvmMarketplacePolicyOptions['withdrawals']
   protected readonly settlementAccount: EvmMarketplacePolicyOptions['settlementAccount']
   private readonly settlementExecutor: EvmMarketplacePolicyOptions['settlementExecutor']
@@ -203,6 +203,7 @@ export abstract class EvmMarketplacePolicyBase<
       resumed: recovery.resumed,
       settled: recovery.settled.length,
       failed: recovery.failed,
+      recovered: recovery.recovered,
     })
   }
 

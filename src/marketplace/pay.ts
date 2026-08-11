@@ -3,6 +3,7 @@ import { encodeAbiParameters, keccak256, toHex } from 'viem'
 import { erc20Abi } from '../contracts/erc20.js'
 import { createMarketplaceEvmClient } from '../client.js'
 import { erc20SwapClaimCall, findErc20SwapLockup } from '../swaps/erc20Swap.js'
+import { executeWithPersistedSubmission } from '../utils/execution.js'
 import { zeroAddress } from '../utils/hex.js'
 import { resolveEvmPaymentIntent } from './intent.js'
 import type {
@@ -12,7 +13,7 @@ import type {
   GenericPaymentProof,
 } from './types.js'
 import type { MarketplaceDriverPaymentTerms, MarketplaceDriverPaymentTermAmount } from '@sudonym-btc/marketplace-driver-interface'
-import type { EvmBoltzRouteVia, EvmHash, EvmHex } from '../types.js'
+import type { EvmBoltzRouteVia, EvmHash, EvmHex, EvmOperationRecord } from '../types.js'
 import type { SwapInRequest } from '../swaps/types.js'
 
 const swapPollIntervalMs = 2_000
@@ -128,7 +129,7 @@ function evmPaymentTerms(options: {
         escrowFee,
         arbitration: {
           type: 'continuous',
-          denominator: '1000000',
+          denominator: '1000',
         },
       },
     },
@@ -540,22 +541,82 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
     chainId: intent.chain.chainId,
   })
 
-  if (balance >= requiredBalance) {
+  const directOperationId = `escrow-${intent.settlementId}`
+  const directActionKey = keccak256(toHex(sortedJson({
+    version: 1,
+    type: 'evm-direct-escrow-payment',
+    chainId: intent.chain.chainId,
+    calls: calls.map(call => ({
+      name: call.name,
+      to: call.to.toLowerCase(),
+      data: call.data.toLowerCase(),
+      value: (call.value ?? 0n).toString(),
+    })),
+  })))
+  let directOperation = await request.operationStore.get(directOperationId)
+  if (directOperation && (
+    directOperation.kind !== 'escrow'
+    || directOperation.data.action !== 'direct_payment'
+    || directOperation.data.actionKey !== directActionKey
+  )) {
+    throw new Error(`Operation ${directOperationId} is already bound to a different payment`)
+  }
+
+  if (balance >= requiredBalance || directOperation) {
     logEvmPay(request, 'info', 'Funding escrow directly from EVM balance', {
       settlementId: intent.settlementId,
       tradeIndex: intent.accountIndex,
     })
-    const execution = await evm.executor.execute(calls, {
-      chainId: intent.chain.chainId,
-      operationId: `escrow-${intent.settlementId}`,
-      waitForReceipt: true,
-    })
+    if (!directOperation) {
+      const now = Math.floor(Date.now() / 1000)
+      const candidate: EvmOperationRecord = {
+        id: directOperationId,
+        kind: 'escrow',
+        status: 'claiming',
+        chainId: intent.chain.chainId,
+        tradeId: intent.settlementId,
+        data: { action: 'direct_payment', actionKey: directActionKey },
+        createdAt: now,
+        updatedAt: now,
+      }
+      if (request.operationStore.putIfAbsent) {
+        if (!(await request.operationStore.putIfAbsent(candidate))) {
+          directOperation = await request.operationStore.get(directOperationId)
+        } else {
+          directOperation = candidate
+        }
+      } else {
+        directOperation = await request.operationStore.get(directOperationId)
+        if (!directOperation) {
+          await request.operationStore.put(candidate)
+          directOperation = candidate
+        }
+      }
+      if (!directOperation || directOperation.data.actionKey !== directActionKey) {
+        throw new Error(`Operation ${directOperationId} is already bound to a different payment`)
+      }
+    }
+    const execution = directOperation.status === 'completed'
+      ? {
+          txHash: directOperation.txHash
+            ?? (() => { throw new Error(`Completed operation ${directOperationId} has no transaction hash`) })(),
+        }
+      : await executeWithPersistedSubmission({
+          executor: evm.executor,
+          operationStore: request.operationStore,
+          operation: directOperation,
+          submissionKey: 'paymentSubmission',
+          calls,
+          chainId: intent.chain.chainId,
+          operationId: directOperationId,
+        })
     const validation = await evm.escrow.validate({
       chainId: intent.chain.chainId,
       txHash: execution.txHash,
       tradeId: intent.settlementId,
       contractAddress: intent.contractAddress,
       contractBytecodeHash: intent.contractBytecodeHash,
+      buyerAddress,
       sellerAddress: intent.sellerAddress,
       arbiterAddress: intent.arbiterAddress,
       assetAddress: intent.asset.assetAddress,
@@ -568,6 +629,14 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
       recycleCovenantHash: recycleCovenantHashValue,
       minConfirmations: 1,
     })
+    directOperation.status = 'completed'
+    directOperation.txHash = execution.txHash
+    directOperation.data = {
+      ...directOperation.data,
+      validationStatus: validation.status,
+    }
+    directOperation.updatedAt = Math.floor(Date.now() / 1000)
+    await request.operationStore.put(directOperation)
     request.setState({
       ...request.state,
       nextTradeIndex: intent.accountIndex + 1,
@@ -638,6 +707,31 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
     description: intent.description,
     ...(routeVia ? { routeVia } : {}),
     postClaimCalls: calls,
+    recoveryProof: paymentProof({
+      txHash: zeroHash,
+      policyId: intent.policy.id,
+      policyType: intent.policy.type,
+      policyHash: intent.contractBytecodeHash,
+      chainId: intent.chain.chainId,
+      contractAddress: intent.contractAddress,
+      tradeId: intent.settlementId,
+      buyerAddress,
+      sellerAddress: intent.sellerAddress,
+      arbiterAddress: intent.arbiterAddress,
+      assetAddress: intent.asset.assetAddress,
+      value: intent.amount.value,
+      bondAmount: 0n,
+      ...(intent.amount.currency ? { currency: intent.amount.currency } : {}),
+      denomination: intent.amount.denomination,
+      decimals: intent.amount.decimals,
+      escrowFee: intent.fee.value,
+      fundedValue: escrowPaymentAmount.value,
+      unlockAt: intent.unlockAt,
+      timeoutClaimantAddress,
+      contextHash,
+      recycleCovenantHash: recycleCovenantHashValue,
+      ...(bidRecycleArgs ? { recycleArgs: bidRecycleArgs } : {}),
+    }) as unknown as Record<string, unknown>,
   })
   if (swap.type !== 'external_payment_required') throw new Error('Unexpected swap-in result')
   logEvmPay(request, 'info', 'External Lightning payment required for EVM swap-in', {
@@ -745,11 +839,14 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
   const receipt = await intent.chain.publicClient.waitForTransactionReceipt({ hash: lockTxHash })
   if (receipt.status !== 'success') throw new Error(`Boltz lock transaction reverted: ${lockTxHash}`)
   const claimAssetAddress = swap.claimAssetAddress ?? intent.asset.assetAddress
+  if (!swap.lockupAddress) throw new Error('Verified Boltz ERC20Swap address is missing')
   const lockup = findErc20SwapLockup(receipt.logs, {
     transactionHash: lockTxHash,
+    contractAddress: swap.lockupAddress,
     preimageHash: swap.preimageHash,
     claimAddress: buyerAddress,
     tokenAddress: claimAssetAddress,
+    ...(swap.refundAddress ? { refundAddress: swap.refundAddress } : {}),
   })
 
   logEvmPay(request, 'info', 'Claiming Boltz swap into escrow', {
@@ -770,30 +867,37 @@ export async function* payEvmIntent(request: EvmPayRequest): AsyncIterable<Gener
     },
   }
 
-  const execution = await evm.executor.execute(
-    [
-      erc20SwapClaimCall({
-        contractAddress: lockup.contractAddress,
-        preimage: swap.preimage!,
-        amount: lockup.amount,
-        tokenAddress: lockup.tokenAddress,
-        refundAddress: lockup.refundAddress,
-        timelock: lockup.timelock,
-      }),
-      ...(swap.postClaimCalls ?? calls),
-    ],
-    {
-      chainId: intent.chain.chainId,
-      operationId: `claim-${swap.operation.id}`,
-      waitForReceipt: true,
-    },
-  )
+  const claimCalls = [
+    erc20SwapClaimCall({
+      contractAddress: lockup.contractAddress,
+      preimage: swap.preimage!,
+      amount: lockup.amount,
+      tokenAddress: lockup.tokenAddress,
+      refundAddress: lockup.refundAddress,
+      timelock: lockup.timelock,
+    }),
+    ...(swap.postClaimCalls ?? calls),
+  ]
+  swap.operation.status = 'claiming'
+  swap.operation.data = { ...swap.operation.data, lockTxHash }
+  swap.operation.updatedAt = Math.floor(Date.now() / 1000)
+  await request.operationStore.put(swap.operation)
+  const execution = await executeWithPersistedSubmission({
+    executor: evm.executor,
+    operationStore: request.operationStore,
+    operation: swap.operation,
+    submissionKey: 'claimSubmission',
+    calls: claimCalls,
+    chainId: intent.chain.chainId,
+    operationId: `claim-${swap.operation.id}`,
+  })
   const validation = await evm.escrow.validate({
     chainId: intent.chain.chainId,
     txHash: execution.txHash,
     tradeId: intent.settlementId,
     contractAddress: intent.contractAddress,
     contractBytecodeHash: intent.contractBytecodeHash,
+    buyerAddress,
     sellerAddress: intent.sellerAddress,
     arbiterAddress: intent.arbiterAddress,
     assetAddress: intent.asset.assetAddress,

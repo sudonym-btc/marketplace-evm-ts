@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import {
   createEvmAuctionPolicy,
+  createEvmEscrowValidator,
   createEvmEscrowPolicy,
   createMarketplaceEvmClient,
   evmPayoutInvoiceDescription,
@@ -15,7 +16,9 @@ import { findErc20SwapLockup } from '../dist/swaps/erc20Swap.js'
 import { sweepEvmMarketplacePayment } from '../dist/marketplace/sweep.js'
 import { deriveEvmOwnerAccount, deriveEvmSwapMaterial, deriveEvmTradeId } from '../dist/seed.js'
 import { MemoryOperationStore } from '../dist/utils/store.js'
-import { createPublicClient, decodeFunctionData, http } from 'viem'
+import { executeWithPersistedSubmission } from '../dist/utils/execution.js'
+import { createChainRoutedEvmExecutor, createConfiguredEvmExecutor } from '../dist/aa/executor.js'
+import { createPublicClient, decodeFunctionData, encodeAbiParameters, encodeEventTopics, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 
 function aaConfig() {
@@ -116,6 +119,96 @@ test('stores operation records in memory', async () => {
   assert.equal((await store.get('op-1')).status, 'awaiting_onchain')
 })
 
+test('persisted submissions reconcile after a post-broadcast crash without rebroadcasting', async () => {
+  const store = new MemoryOperationStore()
+  const operation = {
+    id: 'persisted-execution',
+    kind: 'escrow',
+    status: 'claiming',
+    chainId: 33,
+    data: {},
+    createdAt: 1,
+    updatedAt: 1,
+  }
+  await store.put(operation)
+  const userOperationHash = `0x${'a'.repeat(64)}`
+  const txHash = `0x${'b'.repeat(64)}`
+  let broadcasts = 0
+  let reconciliations = 0
+  const executor = {
+    async getAddress() { return '0x0000000000000000000000000000000000000001' },
+    async execute(_calls, options) {
+      broadcasts += 1
+      await options.onSubmitted({ userOperationHash })
+      throw new Error('simulated crash after submission')
+    },
+    async waitForSubmission(submission) {
+      reconciliations += 1
+      assert.deepEqual(submission, { userOperationHash })
+      return {
+        txHash,
+        userOperationHash,
+        accountAddress: '0x0000000000000000000000000000000000000001',
+      }
+    },
+  }
+  const options = {
+    executor,
+    operationStore: store,
+    operation,
+    submissionKey: 'paymentSubmission',
+    calls: [{ name: 'Funds.move', to: '0x0000000000000000000000000000000000000002', data: '0x' }],
+    chainId: 33,
+    operationId: operation.id,
+  }
+
+  await assert.rejects(() => executeWithPersistedSubmission(options), /simulated crash/)
+  assert.deepEqual((await store.get(operation.id)).data.paymentSubmission, { userOperationHash })
+
+  const result = await executeWithPersistedSubmission(options)
+  assert.equal(result.txHash, txHash)
+  assert.equal(broadcasts, 1)
+  assert.equal(reconciliations, 1)
+  assert.deepEqual((await store.get(operation.id)).data.paymentSubmission, { txHash, userOperationHash })
+})
+
+test('configured executor routing exposes and delegates persisted submission recovery', async () => {
+  const chainId = 33
+  const userOperationHash = `0x${'c'.repeat(64)}`
+  const txHash = `0x${'d'.repeat(64)}`
+  let delegated = 0
+  const routed = createChainRoutedEvmExecutor(new Map([[
+    chainId,
+    {
+      async getAddress() { return '0x0000000000000000000000000000000000000001' },
+      async execute() { throw new Error('must not broadcast') },
+      async waitForSubmission(submission, options) {
+        delegated += 1
+        assert.deepEqual(submission, { userOperationHash })
+        assert.equal(options.chainId, chainId)
+        return {
+          txHash,
+          userOperationHash,
+          accountAddress: '0x0000000000000000000000000000000000000001',
+        }
+      },
+    },
+  ]]))
+  const result = await routed.waitForSubmission({ userOperationHash }, { chainId })
+  assert.equal(result.txHash, txHash)
+  assert.equal(delegated, 1)
+
+  const account = privateKeyToAccount('0x59c6995e998f97a5a0044966f09453811152280db9f94e9ec48b7cae4cf02b8c')
+  const configured = createConfiguredEvmExecutor({ chains: [], account })
+  const client = createMarketplaceEvmClient({
+    chains: [],
+    operationStore: new MemoryOperationStore(),
+    account,
+  })
+  assert.equal(typeof configured.waitForSubmission, 'function')
+  assert.equal(typeof client.executor.waitForSubmission, 'function')
+})
+
 test('EVM escrow startup marks stale Boltz operations failed without aborting', async (t) => {
   const originalFetch = globalThis.fetch
   t.after(() => {
@@ -183,7 +276,7 @@ test('EVM escrow startup marks stale Boltz operations failed without aborting', 
 
   const updated = await store.get('stale-operation')
   assert.equal(updated.status, 'failed')
-  assert.match(updated.error, /Boltz API 404/)
+  assert.equal(updated.error, 'Boltz swap is not available during startup recovery')
   assert.equal(updated.data.failedAtStartup, true)
 })
 
@@ -255,7 +348,7 @@ test('EVM auction startup marks stale Boltz operations failed without aborting',
 
   const updated = await store.get('stale-auction-operation')
   assert.equal(updated.status, 'failed')
-  assert.match(updated.error, /Boltz API 404/)
+  assert.equal(updated.error, 'Boltz swap is not available during startup recovery')
   assert.equal(updated.data.failedAtStartup, true)
 })
 
@@ -266,6 +359,84 @@ test('uses the shared MultiEscrow contract artifact', () => {
   assert.equal(tradeCreated.inputs[3].name, 'buyer')
   assert.equal(tradeCreated.inputs[4].name, 'arbiter')
   assert.match(multiEscrowRuntimeBytecodeHash, /^0x[0-9a-f]{64}$/)
+})
+
+test('escrow validation binds the configured contract, runtime, buyer, and exact amounts', async () => {
+  const chainId = 42161
+  const contractAddress = '0x0000000000000000000000000000000000000010'
+  const buyerAddress = '0x0000000000000000000000000000000000000011'
+  const sellerAddress = '0x0000000000000000000000000000000000000012'
+  const arbiterAddress = '0x0000000000000000000000000000000000000013'
+  const assetAddress = '0x0000000000000000000000000000000000000014'
+  const timeoutClaimantAddress = sellerAddress
+  const tradeId = `0x${'2'.repeat(64)}`
+  const txHash = `0x${'3'.repeat(64)}`
+  const contextHash = `0x${'4'.repeat(64)}`
+  const recycleCovenantHash = `0x${'0'.repeat(64)}`
+  const runtimeHash = '0xf3df0a62b10f205b0f29768aa3d69e777154caaa179f64aabb0a4899c666b017'
+  const log = {
+    address: contractAddress,
+    blockNumber: 10n,
+    logIndex: 0,
+    transactionHash: txHash,
+    topics: encodeEventTopics({
+      abi: multiEscrowAbi,
+      eventName: 'TradeCreated',
+      args: { tradeId, token: assetAddress, arbiter: arbiterAddress },
+    }),
+    data: encodeAbiParameters(
+      [
+        { type: 'address' },
+        { type: 'address' },
+        { type: 'uint256' },
+        { type: 'uint256' },
+        { type: 'uint256' },
+        { type: 'address' },
+        { type: 'uint256' },
+        { type: 'bytes32' },
+        { type: 'bytes32' },
+      ],
+      [sellerAddress, buyerAddress, 105n, 7n, 500n, timeoutClaimantAddress, 5n, contextHash, recycleCovenantHash],
+    ),
+  }
+  const validator = createEvmEscrowValidator({
+    chains: [{
+      chainId,
+      multiEscrowAddress: contractAddress,
+      multiEscrowBytecodeHash: runtimeHash,
+      publicClient: {
+        async getTransactionReceipt() { return { status: 'success', blockNumber: 10n, logs: [log] } },
+        async getBytecode() { return '0x6000' },
+        async getBlockNumber() { return 10n },
+      },
+    }],
+  })
+  const request = {
+    chainId,
+    txHash,
+    tradeId,
+    contractAddress,
+    contractBytecodeHash: runtimeHash,
+    buyerAddress,
+    sellerAddress,
+    arbiterAddress,
+    assetAddress,
+    paymentAmount: { value: 100n, denomination: 'USD', decimals: 6 },
+    bondAmount: { value: 7n, denomination: 'USD', decimals: 6 },
+    unlockAt: 500n,
+    timeoutClaimantAddress,
+    escrowFee: { value: 5n, denomination: 'USD', decimals: 6 },
+    contextHash,
+    recycleCovenantHash,
+  }
+
+  assert.equal((await validator.validate(request)).status, 'valid')
+  assert.match((await validator.validate({ ...request, contractAddress: '0x0000000000000000000000000000000000000099' })).error, /configured deployment/)
+  assert.match((await validator.validate({ ...request, buyerAddress: '0x0000000000000000000000000000000000000099' })).error, /buyer address mismatch/)
+  assert.match((await validator.validate({
+    ...request,
+    paymentAmount: { ...request.paymentAmount, value: 99n },
+  })).error, /amount mismatch/)
 })
 
 test('builds auction bid locks on the shared MultiEscrow contract', () => {
@@ -310,6 +481,146 @@ test('builds auction bid locks on the shared MultiEscrow contract', () => {
   assert.equal('withdraw' in evm.auction, false)
 })
 
+test('auction settlement resumes a persisted user operation after a post-broadcast crash', async () => {
+  const chainId = 42161
+  const contractAddress = '0x0000000000000000000000000000000000000010'
+  const tokenAddress = '0x0000000000000000000000000000000000000014'
+  const buyerAddress = '0x0000000000000000000000000000000000000011'
+  const sellerAddress = '0x0000000000000000000000000000000000000012'
+  const arbiter = privateKeyToAccount('0x59c6995e998f97a5a0044966f09453811152280db9f94e9ec48b7cae4cf02b8c')
+  const tradeId = `0x${'5'.repeat(64)}`
+  const txHash = `0x${'6'.repeat(64)}`
+  const userOperationHash = `0x${'7'.repeat(64)}`
+  const runtimeHash = '0xf3df0a62b10f205b0f29768aa3d69e777154caaa179f64aabb0a4899c666b017'
+  const receiptLog = {
+    address: contractAddress,
+    topics: encodeEventTopics({
+      abi: multiEscrowAbi,
+      eventName: 'Arbitrated',
+      args: { tradeId, token: tokenAddress },
+    }),
+    data: encodeAbiParameters(
+      [
+        { type: 'address' },
+        { type: 'address' },
+        { type: 'uint256' },
+        { type: 'uint256' },
+        { type: 'uint256' },
+        { type: 'uint256' },
+      ],
+      [sellerAddress, buyerAddress, 100n, 0n, 0n, 0n],
+    ),
+  }
+  const chain = {
+    id: 'arbitrum-test',
+    chainId,
+    publicClient: {
+      async getBytecode() { return '0x6000' },
+      async waitForTransactionReceipt() { return { status: 'success', logs: [receiptLog] } },
+    },
+    nativeAsset: { chainId, address: '0x0000000000000000000000000000000000000000', denomination: 'ETH', decimals: 18 },
+    accountAbstraction: aaConfig(),
+    multiEscrowAddress: contractAddress,
+    multiEscrowBytecodeHash: runtimeHash,
+  }
+  let executeCount = 0
+  let reconcileCount = 0
+  const settlementExecutor = {
+    async getAddress() { return arbiter.address },
+    async execute(_calls, options) {
+      executeCount += 1
+      await options.onSubmitted({ userOperationHash })
+      throw new Error('simulated crash after broadcast')
+    },
+    async waitForSubmission(submission) {
+      reconcileCount += 1
+      assert.equal(submission.userOperationHash, userOperationHash)
+      return { txHash, userOperationHash, accountAddress: arbiter.address, gasSponsored: true }
+    },
+  }
+  const store = new MemoryOperationStore()
+  const policy = createEvmAuctionPolicy({
+    chains: [chain],
+    operationStore: store,
+    settlementAccount: arbiter,
+    settlementExecutor,
+  })
+  const intent = {
+    purpose: 'bid',
+    action: 'auction_refund',
+    operationId: 'auction-refund-crash-test',
+    refundPercent: 100,
+    proof: {
+      driver: 'evm',
+      params: {
+        chainId,
+        contractAddress,
+        contractBytecodeHash: runtimeHash,
+        tradeId,
+        arbiterAddress: arbiter.address,
+        policyType: 'evm:multi-escrow-auction-v1',
+      },
+    },
+  }
+
+  await assert.rejects(() => policy.refundPayment(intent), /simulated crash after broadcast/)
+  const pending = await store.get(intent.operationId)
+  assert.equal(pending.status, 'settling')
+  assert.equal(pending.data.userOperationHash, userOperationHash)
+  assert.equal(pending.txHash, undefined)
+  await assert.rejects(
+    () => policy.refundPayment({ ...intent, refundPercent: 50 }),
+    /already bound to a different action/,
+  )
+
+  const resumeStates = []
+  for await (const state of policy.resumeSwapOperations({
+    seed: '8'.repeat(64),
+    highWaterMark: 0,
+    nextUnusedIndex: 1,
+    unusedWindow: 1,
+    discovery: {},
+  })) resumeStates.push(state)
+  assert.ok(
+    resumeStates.some(state => state.type === 'progress' && /Reconciled/.test(state.status)),
+    JSON.stringify(resumeStates),
+  )
+
+  const result = await policy.refundPayment(intent)
+  assert.equal(result.receipt.status, 'completed')
+  assert.equal(result.receipt.externalId, txHash)
+  assert.equal(executeCount, 1)
+  assert.equal(reconcileCount, 1)
+  assert.equal((await store.get(intent.operationId)).status, 'completed')
+
+  const promotionStore = new MemoryOperationStore()
+  const promotionPolicy = createEvmAuctionPolicy({
+    chains: [chain],
+    operationStore: promotionStore,
+    settlementAccount: arbiter,
+    settlementExecutor,
+  })
+  const promotionIntent = {
+    purpose: 'bid',
+    action: 'auction_promote',
+    operationId: 'auction-promote-binding-test',
+    targetTradeId: 'target-trade',
+    targetOrderGroupId: `0x${'8'.repeat(64)}`,
+    targetUnlockAt: 1_800_000_000,
+    recycleArgs: {},
+    proof: intent.proof,
+  }
+  await assert.rejects(() => promotionPolicy.recyclePayment(promotionIntent), /settlement target/)
+  await assert.rejects(
+    () => promotionPolicy.recyclePayment({ ...promotionIntent, targetUnlockAt: 1_800_000_001 }),
+    /already bound to a different action/,
+  )
+  await assert.rejects(
+    () => promotionPolicy.recyclePayment({ ...promotionIntent, recycleArgs: { target: {} } }),
+    /already bound to a different action/,
+  )
+})
+
 test('includes the ERC-20 functions used by marketplace payment execution', () => {
   assert.ok(erc20Abi.some(entry => entry.type === 'function' && entry.name === 'balanceOf'))
   assert.ok(erc20Abi.some(entry => entry.type === 'function' && entry.name === 'approve'))
@@ -330,6 +641,7 @@ test('decodes ERC20Swap lockup logs needed for reverse-swap claims', () => {
     },
   ], {
     transactionHash: '0xe14121ddb6666c27b27b96c4b83d8766588d45222ef2c4bb7f14d181b5cf180e',
+    contractAddress: '0x71c95911e9a5d330f4d621842ec243ee1343292e',
     preimageHash: '0x2dca2d6fdb0d9d5d17b0fbbfddd6c8f5cb61a829f7fe535223e24aec6af62dd0',
     claimAddress: '0x9dd9BE3F94503AEb94EE815Edf1CAE44E5F4C0f1',
     tokenAddress: '0x948b3c65b89df0b4894abe91e6d02fe579834f8f',
@@ -357,7 +669,9 @@ test('sweeps withdrawable EVM escrow balances into a Boltz swap-out', async () =
     chainId,
     boltzCurrency: 'ARB',
     publicClient: {
-      async readContract({ args }) {
+      async getBytecode() { return '0x6000' },
+      async readContract({ functionName, args }) {
+        if (functionName === 'withdrawNonces') return 0n
         return args[0].toLowerCase() === beneficiary.toLowerCase()
           ? [[usdt], [225_000_000n]]
           : [[], []]
@@ -374,6 +688,7 @@ test('sweeps withdrawable EVM escrow balances into a Boltz swap-out', async () =
       { chainId, address: tbtc, denomination: 'tBTC', decimals: 18, boltzCurrency: 'tBTC' },
     ],
     multiEscrowAddress: contractAddress,
+    multiEscrowBytecodeHash: '0xf3df0a62b10f205b0f29768aa3d69e777154caaa179f64aabb0a4899c666b017',
     accountAbstraction: aaConfig(),
   }
   const accounts = {
@@ -411,6 +726,7 @@ test('sweeps withdrawable EVM escrow balances into a Boltz swap-out', async () =
           ...request.preLockCalls,
           { name: 'DEX.0', to: '0x00000000000000000000000000000000000000d2', data: '0x1234' },
         ],
+        preimageHash: `0x${'1'.repeat(64)}`,
         timeoutBlockHeight: 456,
       }
     },
@@ -418,8 +734,10 @@ test('sweeps withdrawable EVM escrow balances into a Boltz swap-out', async () =
   const executor = {
     async execute(calls, options) {
       executions.push({ calls, options })
+      await options.onSubmitted?.({ userOperationHash: `0x${'b'.repeat(64)}` })
       return {
         txHash: `0x${'a'.repeat(64)}`,
+        userOperationHash: `0x${'b'.repeat(64)}`,
         accountAddress: beneficiary,
       }
     },
@@ -480,6 +798,10 @@ test('sweeps withdrawable EVM escrow balances into a Boltz swap-out', async () =
   const stored = await store.get('op-lock')
   assert.equal(stored.status, 'locking')
   assert.equal(stored.txHash, `0x${'a'.repeat(64)}`)
+  assert.deepEqual(stored.data.lockSubmission, {
+    txHash: `0x${'a'.repeat(64)}`,
+    userOperationHash: `0x${'b'.repeat(64)}`,
+  })
 })
 
 test('derives deterministic EVM owner accounts from the marketplace seed and trade index', () => {

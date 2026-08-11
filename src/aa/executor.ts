@@ -28,12 +28,24 @@ export function createConfiguredEvmExecutor(options: ConfiguredEvmExecutorOption
     )
   }
 
+  return createChainRoutedEvmExecutor(executors)
+}
+
+/** Internal chain router shared by configured executors and deterministic tests. */
+export function createChainRoutedEvmExecutor(executors: ReadonlyMap<number, EvmExecutor>): EvmExecutor {
   return {
     async getAddress(chainId) {
       return getExecutor(executors, chainId).getAddress(chainId)
     },
     execute(calls: NamedEvmCall[], executionOptions) {
       return getExecutor(executors, executionOptions.chainId).execute(calls, executionOptions)
+    },
+    waitForSubmission(submission, executionOptions) {
+      const executor = getExecutor(executors, executionOptions.chainId)
+      if (!executor.waitForSubmission) {
+        throw new Error(`EVM executor for chain ${executionOptions.chainId} cannot reconcile submissions`)
+      }
+      return executor.waitForSubmission(submission, executionOptions)
     },
   }
 }
@@ -49,10 +61,13 @@ function adaptAaExecutor(
     execute(calls, options) {
       return executor.execute(calls, { ...options, chainId })
     },
+    waitForSubmission(submission, options) {
+      return executor.waitForSubmission(submission, { ...options, chainId })
+    },
   }
 }
 
-function getExecutor(executors: Map<number, EvmExecutor>, chainId: number): EvmExecutor {
+function getExecutor(executors: ReadonlyMap<number, EvmExecutor>, chainId: number): EvmExecutor {
   const executor = executors.get(chainId)
   if (!executor) throw new Error(`No EVM executor configured for chain ${chainId}`)
   return executor

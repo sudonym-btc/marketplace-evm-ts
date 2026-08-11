@@ -2,8 +2,6 @@
 
 > **EvmAuctionPolicy** = `MarketplaceDriverAuctionPolicy`\<[`GenericPolicyPaymentState`](GenericPolicyPaymentState.md), [`EvmAuctionPaymentPolicy`](EvmAuctionPaymentPolicy.md), [`EvmPaymentAsset`](EvmPaymentAsset.md), [`GenericPaymentIntent`](GenericPaymentIntent.md), [`GenericPaymentValidationRequest`](GenericPaymentValidationRequest.md), [`GenericPaymentValidationResult`](GenericPaymentValidationResult.md), [`GenericPaymentSweepInput`](GenericPaymentSweepInput.md), [`GenericPaymentSweepState`](GenericPaymentSweepState.md), `GenericPaymentSettlementIntent`, `GenericPaymentSettlementState`, [`GenericSwapResumeContext`](GenericSwapResumeContext.md), [`GenericSwapResumeState`](GenericSwapResumeState.md), [`GenericAuctionSettlementIntent`](GenericAuctionSettlementIntent.md), [`GenericAuctionSettlementResult`](GenericAuctionSettlementResult.md)\> & `object`
 
-Defined in: [dependencies/marketplace-evm-ts/src/marketplace/types.ts:162](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/marketplace/types.ts#L162)
-
 ## Type Declaration
 
 ### id

@@ -1,5 +1,13 @@
 # swap
 
+## Functions
+
+- [erc20SwapClaimCall](functions/erc20SwapClaimCall.md)
+- [erc20SwapCooperativeRefundCall](functions/erc20SwapCooperativeRefundCall.md)
+- [erc20SwapLockCalls](functions/erc20SwapLockCalls.md)
+- [erc20SwapRefundCall](functions/erc20SwapRefundCall.md)
+- [findErc20SwapLockup](functions/findErc20SwapLockup.md)
+
 ## References
 
 ### BoltzClient

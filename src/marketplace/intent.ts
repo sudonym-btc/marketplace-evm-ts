@@ -7,6 +7,7 @@ import type {
   GenericPaymentIntent,
   ResolvedEvmMarketplaceChainConfig,
 } from './types.js'
+import { evmEscrowContractBytecodeHash } from './policies.js'
 
 function address(value: string | undefined, label: string): EvmAddress {
   if (!value || !/^0x[a-fA-F0-9]{40}$/.test(value)) throw new Error(`Invalid ${label}`)
@@ -81,10 +82,24 @@ export function resolveEvmPaymentIntent(
 
   const chain = chainFor(chains, intent.contract.chainId ?? intent.asset.chainId ?? intent.policy.chainId)
   const asset = assetForIntent(chain, intent)
-  const contractAddress = address(intent.contract.address ?? intent.policy.contractAddress, 'contractAddress')
+  const contractAddress = chain.multiEscrowAddress
+  const assertedContractAddress = intent.contract.address ?? intent.policy.contractAddress
+  if (assertedContractAddress && address(assertedContractAddress, 'contractAddress').toLowerCase() !== contractAddress.toLowerCase()) {
+    throw new Error('EVM payment contract does not match configured MultiEscrow deployment')
+  }
   const sellerAddress = address(intent.participants.seller.address, 'sellerAddress')
   const arbiterAddress = address(intent.participants.arbiter.address, 'arbiterAddress')
-  const contractBytecodeHash = hash(intent.contract.bytecodeHash ?? intent.policy.hash, 'contractBytecodeHash')
+  const contractBytecodeHash = evmEscrowContractBytecodeHash(chains, chain.chainId)
+  const assertedHash = intent.contract.bytecodeHash ?? intent.policy.hash
+  if (assertedHash && hash(assertedHash, 'contractBytecodeHash').toLowerCase() !== contractBytecodeHash.toLowerCase()) {
+    throw new Error('EVM payment contract hash does not match configured MultiEscrow runtime')
+  }
+  const policyType = intent.purpose === 'bid' ? 'evm:multi-escrow-auction-v1' : 'evm:multi-escrow'
+  const policyId = intent.purpose === 'bid'
+    ? `evm:${chain.chainId}:${contractAddress.toLowerCase()}:auction`
+    : `evm:${chain.chainId}:${contractAddress.toLowerCase()}`
+  if (intent.policy.type && intent.policy.type !== policyType) throw new Error('EVM payment policy type mismatch')
+  if (intent.policy.id && intent.policy.id !== policyId) throw new Error('EVM payment policy id mismatch')
 
   return {
     tradeId: intent.tradeId,
@@ -97,8 +112,8 @@ export function resolveEvmPaymentIntent(
     contractAddress,
     contractBytecodeHash,
     policy: {
-      id: intent.policy.id,
-      type: intent.policy.type ?? intent.contract.type,
+      id: policyId,
+      type: policyType,
     },
     sellerAddress,
     arbiterAddress,

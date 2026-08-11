@@ -3,13 +3,15 @@ import { isMarketplaceDriverEncryptedPaymentProofParams } from '@sudonym-btc/mar
 
 import type { MarketplaceEvmClient } from '../client.js'
 import { createEvmEscrowCallBuilder } from '../escrow/callBuilder.js'
-import { deriveEvmSwapMaterial } from '../seed.js'
 import { btcAmountToSats } from '../swaps/amounts.js'
 import { erc20SwapLockCalls } from '../swaps/erc20Swap.js'
 import type { SwapOutRequest } from '../swaps/types.js'
 import type { EvmAddress, EvmAmount, EvmAsset, EvmOperationStore } from '../types.js'
+import { executeWithPersistedSubmission } from '../utils/execution.js'
 import { normalizeAddress, zeroAddress } from '../utils/hex.js'
 import { evmPayoutInvoiceDescription } from './invoices.js'
+import { evmEscrowContractBytecodeHash } from './policies.js'
+import { sha256Hex } from '../utils/sha256.js'
 import type {
   EvmMarketplacePolicyState,
   GenericBolt11PaymentRequest,
@@ -55,6 +57,7 @@ const withdrawTypes = {
   Withdraw: [
     { name: 'token', type: 'address' },
     { name: 'destination', type: 'address' },
+    { name: 'nonce', type: 'uint256' },
   ],
 } as const
 
@@ -238,13 +241,20 @@ async function signWithdraw(options: {
   contractAddress: EvmAddress
   tokenAddress: EvmAddress
   destinationAddress: EvmAddress
+  chain: ResolvedEvmMarketplaceChainConfig
 }) {
   const owner = options.client.accounts?.ownerAccount(options.tradeIndex, options.chainId)
   if (!owner) throw new Error('EVM sweep requires a marketplace seed')
+  const nonce = await options.chain.publicClient.readContract({
+    address: options.contractAddress,
+    abi: multiEscrowAbi,
+    functionName: 'withdrawNonces',
+    args: [owner.address],
+  }) as bigint
   return owner.signTypedData({
     domain: {
       name: 'Nostr MultiEscrow',
-      version: '6',
+      version: '7',
       chainId: options.chainId,
       verifyingContract: options.contractAddress,
     },
@@ -253,6 +263,7 @@ async function signWithdraw(options: {
     message: {
       token: options.tokenAddress,
       destination: options.destinationAddress,
+      nonce,
     },
   })
 }
@@ -277,9 +288,15 @@ export async function* sweepEvmMarketplacePayment(options: EvmSweepOptions): Asy
 
   const params = proofParams(payment)
   const chain = chainFor(options.chains, params.chainId)
-  const contractAddress = sameAddress(params.contractAddress, zeroAddress)
-    ? chain.multiEscrowAddress
-    : params.contractAddress
+  if (!sameAddress(params.contractAddress, zeroAddress) && !sameAddress(params.contractAddress, chain.multiEscrowAddress)) {
+    throw new Error('EVM sweep proof contract does not match configured MultiEscrow deployment')
+  }
+  const contractAddress = chain.multiEscrowAddress
+  const expectedRuntimeHash = evmEscrowContractBytecodeHash(options.chains, chain.chainId)
+  const bytecode = await chain.publicClient.getBytecode({ address: contractAddress })
+  if (!bytecode || bytecode === '0x' || (await sha256Hex(bytecode)).toLowerCase() !== expectedRuntimeHash.toLowerCase()) {
+    throw new Error('EVM sweep configured MultiEscrow runtime bytecode hash mismatch')
+  }
   const discoveryClient = options.client(seed)
   const discovered = await discoverLocalBeneficiary(
     discoveryClient,
@@ -329,6 +346,7 @@ export async function* sweepEvmMarketplacePayment(options: EvmSweepOptions): Asy
       contractAddress,
       tokenAddress: balance.tokenAddress,
       destinationAddress,
+      chain,
     })
     const withdrawCall = createEvmEscrowCallBuilder().withdraw({
       assetAddress: balance.tokenAddress,
@@ -414,26 +432,41 @@ export async function* sweepEvmMarketplacePayment(options: EvmSweepOptions): Asy
       })
       continue
     }
-    const material = deriveEvmSwapMaterial(seed, {
-      tradeIndex: discovered.beneficiary.tradeIndex,
-      chainId: chain.chainId,
-      direction: 'swap-out',
-      attemptIndex: 0,
-    })
+    if (!swap.preimageHash) {
+      throw new Error(`EVM swap-out ${swap.operation.id} is missing its verified invoice payment hash`)
+    }
     const lockCalls = erc20SwapLockCalls({
       contractAddress: swap.lockupAddress,
-      preimageHash: material.preimageHash,
+      preimageHash: swap.preimageHash,
       amount: lockAmount,
       tokenAddress: swap.lockAssetAddress,
       claimAddress: swap.claimAddress,
       timelock: swap.timeoutBlockHeight,
     })
     const calls = [...(swap.preLockCalls ?? []), ...lockCalls]
-    const execution = await sweepClient.executor.execute(calls, {
+    swap.operation.status = 'locking'
+    swap.operation.data = {
+      ...swap.operation.data,
+      lockPlan: {
+        contractAddress: swap.lockupAddress,
+        preimageHash: swap.preimageHash,
+        amount: lockAmount.toString(),
+        tokenAddress: swap.lockAssetAddress,
+        claimAddress: swap.claimAddress,
+        refundAddress: discovered.beneficiary.address,
+        timelock: swap.timeoutBlockHeight,
+      },
+    }
+    await options.operationStore.put(swap.operation)
+    const execution = await executeWithPersistedSubmission({
+      executor: sweepClient.executor,
+      operationStore: options.operationStore,
+      operation: swap.operation,
+      submissionKey: 'lockSubmission',
+      calls,
       chainId: chain.chainId,
       operationId: swap.operation.id,
     })
-    swap.operation.status = 'locking'
     swap.operation.txHash = execution.txHash
     swap.operation.data = {
       ...swap.operation.data,

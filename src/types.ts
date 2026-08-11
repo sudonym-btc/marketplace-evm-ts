@@ -46,6 +46,12 @@ export type EvmChainConfig = {
   nativeAsset: EvmAsset
   assets?: EvmAsset[]
   boltz?: EvmBoltzConfig
+  /**
+   * Authoritative MultiEscrow deployment used by validators. Payment proofs are
+   * never allowed to select a different contract or runtime hash.
+   */
+  multiEscrowAddress?: EvmAddress
+  multiEscrowBytecodeHash?: EvmHex
   accountAbstraction: EvmAaConfig
 }
 
@@ -80,6 +86,13 @@ export type EvmExecutionOptions = {
   chainId: number
   operationId?: string
   waitForReceipt?: boolean
+  /** Called immediately after broadcast and before any receipt wait. */
+  onSubmitted?: (submission: EvmExecutionSubmission) => void | Promise<void>
+}
+
+export type EvmExecutionSubmission = {
+  txHash?: EvmHash
+  userOperationHash?: EvmHash
 }
 
 export type EvmExecutionResult = {
@@ -92,6 +105,11 @@ export type EvmExecutionResult = {
 export type EvmExecutor = {
   getAddress(chainId: number): Promise<EvmAddress>
   execute(calls: NamedEvmCall[], options: EvmExecutionOptions): Promise<EvmExecutionResult>
+  /** Reconcile a previously persisted broadcast without submitting it again. */
+  waitForSubmission?(
+    submission: EvmExecutionSubmission,
+    options: Pick<EvmExecutionOptions, 'chainId'>,
+  ): Promise<EvmExecutionResult>
 }
 
 export type EvmOperationStatus =
@@ -116,6 +134,11 @@ export type EvmOperationRecord = {
   swapId?: string
   txHash?: EvmHash
   error?: string
+  /**
+   * Public recovery journal only. Implementations must not persist seeds,
+   * preimages, invoice plaintext, opaque provider payloads, or provider error
+   * bodies here.
+   */
   data: Record<string, unknown>
   createdAt: number
   updatedAt: number
@@ -132,6 +155,8 @@ export type EvmOperationQuery = {
 export type EvmOperationStore = {
   get(id: string): Promise<EvmOperationRecord | null>
   put(record: EvmOperationRecord): Promise<void>
+  /** Atomically insert a record when it does not already exist. */
+  putIfAbsent?(record: EvmOperationRecord): Promise<boolean>
   list(query?: EvmOperationQuery): Promise<EvmOperationRecord[]>
   delete(id: string): Promise<void>
 }
@@ -154,4 +179,36 @@ export type EvmBoltzConfig = {
   apiUrl: string
   wsUrl?: string
   nativeCurrencyByChainId?: Record<number, string>
+  /** Trust roots required before executing provider-generated calls or swaps. */
+  trustByChainId?: Record<number, EvmBoltzChainTrust>
+}
+
+export type EvmTrustedContract = {
+  address: EvmAddress
+  runtimeBytecodeHash: EvmHex
+}
+
+export type EvmTrustedCallDecoder =
+  | 'exact-input-v1'
+  | 'permit2-approve-v1'
+  | 'uniswap-universal-router-v3-exact-in-v1'
+
+export type EvmTrustedCallFunction = {
+  /** Exact 4-byte function selector for the pinned ABI. */
+  selector: EvmHex
+  /** Built-in semantic decoder; unknown call shapes are never accepted. */
+  decoder: EvmTrustedCallDecoder
+}
+
+export type EvmTrustedCallTarget = EvmTrustedContract & {
+  functions: EvmTrustedCallFunction[]
+  /** Maximum native value that any call may send. Defaults to zero. */
+  maxValue?: bigint
+}
+
+export type EvmBoltzChainTrust = {
+  /** The only ERC20Swap deployment that may custody swap funds. */
+  erc20Swap: EvmTrustedContract
+  /** Explicit trust roots for provider-produced DEX/router calls. */
+  dexCallTargets?: EvmTrustedCallTarget[]
 }

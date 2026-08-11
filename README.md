@@ -36,8 +36,9 @@ params carry the transaction hash, chain id, trade id, parties, asset,
 timeout claimant, and context hashes. The validator resolves encrypted params
 through the shared driver `decryptParams` hook when needed, then verifies the
 transaction receipt and decoded `TradeCreated` log. Contract address and
-bytecode hash are optional proof params; when the address is omitted, the
-configured chain `multiEscrowAddress` is used.
+bytecode hash are assertions only. The configured chain—not the proof—is the
+trust root for `multiEscrowAddress` and its SHA-256 runtime bytecode hash.
+Validation fails closed if that deployment or any exact escrow term differs.
 
 ## Non-Responsibilities
 
@@ -70,10 +71,18 @@ const validation = await evm.escrow.validate({
   txHash,
   tradeId,
   contractAddress,
+  contractBytecodeHash,
+  buyerAddress,
   sellerAddress,
   arbiterAddress,
   assetAddress,
   paymentAmount,
+  bondAmount,
+  unlockAt,
+  timeoutClaimantAddress,
+  escrowFee,
+  contextHash,
+  recycleCovenantHash,
 })
 
 const calls = evm.escrow.createTrade({
@@ -107,6 +116,60 @@ const discovery = await evm.discoverHighWatermark({
 Discovery checks deterministic AA activity for each derived trade index: smart
 account deployment, EntryPoint nonce, and optional protocol probes supplied by
 the adapter. It does not sweep arbitrary ERC20 or native balances.
+
+## Swap trust roots and recovery
+
+Boltz is untrusted at the call boundary. Before requesting a quote or creating
+a swap, configure `boltz.trustByChainId` with the expected ERC20Swap address
+and SHA-256 runtime hash. Routed swaps additionally require pinned call targets
+and selector-specific semantic decoders:
+
+```ts
+const boltz = {
+  apiUrl,
+  trustByChainId: {
+    [chainId]: {
+      erc20Swap: { address: erc20Swap, runtimeBytecodeHash: erc20SwapHash },
+      dexCallTargets: [{
+        address: universalRouter,
+        runtimeBytecodeHash: universalRouterHash,
+        functions: [{
+          selector: '0x24856bc3',
+          decoder: 'uniswap-universal-router-v3-exact-in-v1',
+        }],
+      }],
+    },
+  },
+}
+```
+
+Unknown targets/selectors, native value, over-approval, extra router commands,
+and mismatched tokens, amounts, paths, or recipients are rejected before a
+provider side effect. Production operation stores should implement atomic
+`putIfAbsent`.
+
+### Durable operation record schema
+
+Operation records are recovery journals, not provider-response caches. The
+durable surface is limited to:
+
+- top-level operation, chain, trade, swap, transaction, status, and timestamp
+  fields;
+- `data.request` with `tradeIndex`, `attemptIndex`, `chainId`, optional public
+  `assetAddress`, and an optional public recovery-proof template;
+- exact public call plans needed to finish a routed claim, lock, or refund;
+- `data.providerStatus` with only `status`, optional provider `id`, and optional
+  transaction hash;
+- request/invoice fingerprints, payment hashes, pinned runtime hashes, limits,
+  and `*Submission` transaction or user-operation hashes used for crash-safe
+  reconciliation.
+
+Seeds, derived private material, swap preimages, BOLT11 invoice plaintext,
+opaque provider payloads, and provider error bodies are never written to the
+operation store. A newly returned swap-in invoice lives only in memory; after a
+restart, an exact retry fails closed instead of creating another swap. Provider
+completion preimages and cooperative-refund signatures are also returned only
+ephemerally.
 
 ## Current Status
 

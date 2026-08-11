@@ -2,8 +2,6 @@
 
 > **BoltzSubmarineSwapResponse** = `Omit`\<`OpenApiSubmarineResponse`, `"address"` \| `"expectedAmount"` \| `"timeoutBlockHeight"`\> & `object`
 
-Defined in: [dependencies/marketplace-evm-ts/src/boltz/types.ts:59](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/boltz/types.ts#L59)
-
 ## Type Declaration
 
 ### address?

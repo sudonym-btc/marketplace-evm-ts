@@ -1,6 +1,13 @@
 import type { BoltzClient, BoltzStatusUpdate } from '../boltz/types.js'
 import type { NamedEvmCall } from '../types.js'
-import type { EvmAddress, EvmAmount, EvmOperationRecord, EvmOperationStore } from '../types.js'
+import type {
+  EvmAddress,
+  EvmAmount,
+  EvmBoltzChainTrust,
+  EvmOperationRecord,
+  EvmOperationStore,
+  ResolvedEvmChainConfig,
+} from '../types.js'
 import type { EvmAccountManager } from '../accounts.js'
 import type { EvmHex } from '../types.js'
 import type { EvmSeedConfig } from '../seed.js'
@@ -26,6 +33,8 @@ export type SwapInRequest = SwapAttemptRequest & {
     quoteCurrency: string
   }
   postClaimCalls?: NamedEvmCall[]
+  /** Public proof template used to reconstruct publication after a crash. */
+  recoveryProof?: Record<string, unknown>
 }
 
 export type SwapOutRequest = SwapAttemptRequest & {
@@ -101,6 +110,7 @@ export type SwapOutResult =
       preLockCalls?: NamedEvmCall[]
       limits?: SwapAmountLimits
       timeoutBlockHeight: number
+      preimageHash?: EvmHex
     }
   | {
       type: 'completed'
@@ -111,6 +121,10 @@ export type SwapOutResult =
 export type SwapResumeResult = {
   operation: EvmOperationRecord
   latestStatus?: BoltzStatusUpdate
+  /** Returned only at completion and never persisted by the service. */
+  preimage?: EvmHex
+  /** Provider signature for an early cooperative refund; never persisted. */
+  cooperativeRefundSignature?: EvmHex
 }
 
 export type SwapServiceOptions = {
@@ -118,6 +132,8 @@ export type SwapServiceOptions = {
   store: EvmOperationStore
   seed: string | EvmSeedConfig
   accounts: EvmAccountManager
+  chains: ResolvedEvmChainConfig[]
+  trustByChainId?: Record<number, EvmBoltzChainTrust>
   now?: () => number
   logger?: MarketplaceDriverLogger
 }

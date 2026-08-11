@@ -12,6 +12,7 @@ import type {
   GenericPaymentValidationResult,
   ResolvedEvmMarketplaceChainConfig,
 } from './types.js'
+import { evmEscrowContractBytecodeHash } from './policies.js'
 
 const recycleCovenantTypeHash = keccak256(toHex('RecycleCovenant(address buyer,address seller,address arbiter,address token,uint256 paymentAmount,uint256 bondAmount,address timeoutClaimant,uint256 escrowFee,bytes32 contextHash)'))
 
@@ -135,6 +136,63 @@ function sameAddress(left: EvmAddress, right: EvmAddress): boolean {
   return left.toLowerCase() === right.toLowerCase()
 }
 
+function expectedIdentityAddress(
+  identity: { address?: string } | undefined,
+  label: string,
+): EvmAddress | undefined {
+  return identity?.address ? address(identity.address, label) : undefined
+}
+
+function validateExpectedEvidence(
+  request: GenericPaymentValidationRequest,
+  params: Record<string, unknown>,
+  chainId: number,
+  contractAddress: EvmAddress,
+  contractBytecodeHash: EvmHex,
+): string | undefined {
+  const expected = request.expected
+  if (!expected) return undefined
+  if (expected.settlementId && normalizeSettlementId(expected.settlementId) !== normalizeSettlementId(stringValue(params.tradeId, 'tradeId'))) {
+    return 'EVM settlement id does not match expected payment'
+  }
+  if (expected.contract?.chainId !== undefined && expected.contract.chainId !== chainId) {
+    return 'EVM chain id does not match expected contract'
+  }
+  if (expected.contract?.address && !sameAddress(address(expected.contract.address, 'expected contract address'), contractAddress)) {
+    return 'EVM contract address does not match expected contract'
+  }
+  if (expected.contract?.bytecodeHash && hash(expected.contract.bytecodeHash, 'expected contract bytecode hash').toLowerCase() !== contractBytecodeHash.toLowerCase()) {
+    return 'EVM contract runtime does not match expected contract'
+  }
+  const parties = [
+    ['buyer', expectedIdentityAddress(expected.participants?.buyer, 'expected buyer address'), address(params.buyerAddress, 'buyerAddress')],
+    ['seller', expectedIdentityAddress(expected.participants?.seller, 'expected seller address'), address(params.sellerAddress, 'sellerAddress')],
+    ['arbiter', expectedIdentityAddress(expected.participants?.arbiter, 'expected arbiter address'), address(params.arbiterAddress, 'arbiterAddress')],
+  ] as const
+  for (const [role, expectedAddress, actualAddress] of parties) {
+    if (expectedAddress && !sameAddress(expectedAddress, actualAddress)) return `EVM ${role} does not match expected participant`
+  }
+  if (expected.amount) {
+    const actual = paymentAmount(params)
+    if (
+      actual.value !== BigInt(expected.amount.value)
+      || actual.decimals !== expected.amount.decimals
+      || amountCurrency(actual) !== amountCurrency(expected.amount)
+    ) return 'EVM payment amount does not match expected amount'
+  }
+  if (expected.fee) {
+    const actualFee = optionalAmount(params, 'escrowFee', 'escrow fee')
+    if (!actualFee || actualFee.value !== BigInt(expected.fee.value) || actualFee.decimals !== expected.fee.decimals) {
+      return 'EVM escrow fee does not match expected fee'
+    }
+  }
+  return undefined
+}
+
+function normalizeSettlementId(value: string): string {
+  return value.replace(/^0x/i, '').toLowerCase()
+}
+
 function isEvmProofDriver(driver: string): boolean {
   return driver === 'evm' || driver.startsWith('evm:')
 }
@@ -222,7 +280,7 @@ function expectedEvmTerms(params: Record<string, unknown>): MarketplaceDriverPay
         escrowFee: fee,
         arbitration: {
           type: 'continuous',
-          denominator: '1000000',
+          denominator: '1000',
         },
       },
     },
@@ -366,33 +424,54 @@ export async function validateEvmMarketplacePayment(
       ? params.chainId
       : numberValue(request.expected?.contract?.chainId, 'chainId')
     const chain = chains.find(candidate => candidate.chainId === chainId)
-    const contractAddress = address(params.contractAddress ?? chain?.multiEscrowAddress, 'contractAddress')
+    if (!chain) throw new Error(`No EVM marketplace chain configured for chainId ${chainId}`)
+    const contractAddress = chain.multiEscrowAddress
+    const configuredHash = evmEscrowContractBytecodeHash(chains, chainId)
+    const policyType = stringValue(params.policyType, 'policyType')
+    const configuredPolicyId = policyType === 'evm:multi-escrow-auction-v1'
+      ? `evm:${chainId}:${contractAddress.toLowerCase()}:auction`
+      : policyType === 'evm:multi-escrow'
+        ? `evm:${chainId}:${contractAddress.toLowerCase()}`
+        : undefined
+    if (!configuredPolicyId || stringValue(params.policyId, 'policyId') !== configuredPolicyId) {
+      return { driver: 'evm', status: 'invalid', error: 'Payment proof policy does not match configured MultiEscrow policy' }
+    }
+    if (params.contractAddress && !sameAddress(address(params.contractAddress, 'contractAddress'), contractAddress)) {
+      return { driver: 'evm', status: 'invalid', error: 'Payment proof contract does not match configured MultiEscrow deployment' }
+    }
+    if (params.contractBytecodeHash && hash(params.contractBytecodeHash, 'contractBytecodeHash').toLowerCase() !== configuredHash.toLowerCase()) {
+      return { driver: 'evm', status: 'invalid', error: 'Payment proof bytecode hash does not match configured MultiEscrow runtime' }
+    }
+    if (params.policyHash && hash(params.policyHash, 'policyHash').toLowerCase() !== configuredHash.toLowerCase()) {
+      return { driver: 'evm', status: 'invalid', error: 'Payment proof policy hash does not match configured MultiEscrow runtime' }
+    }
+    const expectedEvidenceError = validateExpectedEvidence(request, params, chainId, contractAddress, configuredHash)
+    if (expectedEvidenceError) return { driver: 'evm', status: 'invalid', error: expectedEvidenceError }
     const validator = createEvmEscrowValidator({ chains })
     const expectedPaymentAmount = paymentAmount(params)
     const bondAmount = optionalAmount(params, 'bondAmount', 'bond amount')
     const escrowFee = optionalAmount(params, 'escrowFee', 'escrow fee')
+    const expectedFundedValue = expectedPaymentAmount.value + (escrowFee?.value ?? 0n) + (bondAmount?.value ?? 0n)
+    if (bigintString(params.fundedValue, 'fundedValue') !== expectedFundedValue) {
+      return { driver: 'evm', status: 'invalid', error: 'Payment proof funded value does not equal its exact payment, fee, and bond' }
+    }
     const result = await validator.validate({
       chainId,
       txHash: txHash(params.txHash),
       tradeId: stringValue(params.tradeId ?? request.expected?.settlementId, 'tradeId'),
       contractAddress,
-      ...(params.contractBytecodeHash
-        ? { contractBytecodeHash: hash(params.contractBytecodeHash, 'contractBytecodeHash') }
-        : {}),
+      contractBytecodeHash: configuredHash,
+      buyerAddress: address(params.buyerAddress, 'buyerAddress'),
       sellerAddress: address(params.sellerAddress, 'sellerAddress'),
       arbiterAddress: address(params.arbiterAddress, 'arbiterAddress'),
       assetAddress: address(params.assetAddress, 'assetAddress'),
       paymentAmount: expectedPaymentAmount,
       ...(bondAmount ? { bondAmount } : {}),
-      ...(params.unlockAt !== undefined ? { unlockAt: bigintString(params.unlockAt, 'unlockAt') } : {}),
-      ...(params.timeoutClaimantAddress
-        ? { timeoutClaimantAddress: address(params.timeoutClaimantAddress, 'timeoutClaimantAddress') }
-        : {}),
+      unlockAt: bigintString(params.unlockAt, 'unlockAt'),
+      timeoutClaimantAddress: address(params.timeoutClaimantAddress, 'timeoutClaimantAddress'),
       ...(escrowFee ? { escrowFee } : {}),
-      ...(params.contextHash ? { contextHash: hash(params.contextHash, 'contextHash') } : {}),
-      ...(params.recycleCovenantHash
-        ? { recycleCovenantHash: hash(params.recycleCovenantHash, 'recycleCovenantHash') }
-        : {}),
+      contextHash: hash(params.contextHash, 'contextHash'),
+      recycleCovenantHash: hash(params.recycleCovenantHash, 'recycleCovenantHash'),
       minConfirmations: 1,
     })
     const paymentResultAmount = resultAmount(expectedPaymentAmount.value, expectedPaymentAmount, request.expected)

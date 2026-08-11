@@ -2,15 +2,11 @@
 
 > **EvmAccountManager** = `object`
 
-Defined in: [dependencies/marketplace-evm-ts/src/accounts.ts:17](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/accounts.ts#L17)
-
 ## Methods
 
 ### executorForTradeIndex()
 
 > **executorForTradeIndex**(`tradeIndex`): [`EvmExecutor`](EvmExecutor.md)
-
-Defined in: [dependencies/marketplace-evm-ts/src/accounts.ts:20](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/accounts.ts#L20)
 
 #### Parameters
 
@@ -27,8 +23,6 @@ Defined in: [dependencies/marketplace-evm-ts/src/accounts.ts:20](https://github.
 ### ownerAccount()
 
 > **ownerAccount**(`tradeIndex`, `chainId?`): `object`
-
-Defined in: [dependencies/marketplace-evm-ts/src/accounts.ts:18](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/accounts.ts#L18)
 
 #### Parameters
 
@@ -169,8 +163,6 @@ Defined in: [dependencies/marketplace-evm-ts/src/accounts.ts:18](https://github.
 ### smartAccountAddress()
 
 > **smartAccountAddress**(`tradeIndex`, `chainId`): `Promise`\<`` `0x${string}` ``\>
-
-Defined in: [dependencies/marketplace-evm-ts/src/accounts.ts:19](https://github.com/sudonym-btc/marketplace-evm-ts/blob/9753d1381d82ef5e3e048bb2ccde93101c2613ce/src/accounts.ts#L19)
 
 #### Parameters
 
