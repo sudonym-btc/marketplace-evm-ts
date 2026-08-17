@@ -175,14 +175,17 @@ function validateExpectedEvidence(
   if (expected.amount) {
     const actual = paymentAmount(params)
     if (
-      actual.value !== BigInt(expected.amount.value)
-      || actual.decimals !== expected.amount.decimals
-      || amountCurrency(actual) !== amountCurrency(expected.amount)
+      amountCurrency(actual) !== amountCurrency(expected.amount)
+      || scaleAmountValue(actual.value, actual.decimals, expected.amount.decimals) !== BigInt(expected.amount.value)
     ) return 'EVM payment amount does not match expected amount'
   }
   if (expected.fee) {
     const actualFee = optionalAmount(params, 'escrowFee', 'escrow fee')
-    if (!actualFee || actualFee.value !== BigInt(expected.fee.value) || actualFee.decimals !== expected.fee.decimals) {
+    if (
+      !actualFee
+      || amountCurrency(actualFee) !== amountCurrency(expected.fee)
+      || scaleAmountValue(actualFee.value, actualFee.decimals, expected.fee.decimals) !== BigInt(expected.fee.value)
+    ) {
       return 'EVM escrow fee does not match expected fee'
     }
   }
