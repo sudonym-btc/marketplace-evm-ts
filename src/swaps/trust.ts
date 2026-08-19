@@ -30,7 +30,9 @@ const universalRouterAbi = parseAbi([
 ])
 
 type SemanticCall =
-  | { kind: 'swap'; target: EvmAddress; tokenIn: EvmAddress; tokenOut: EvmAddress; recipient: EvmAddress; amountIn: bigint; amountOutMin: bigint; index: number }
+  | { kind: 'swap'; target: EvmAddress; tokenIn: EvmAddress; tokenOut: EvmAddress; recipient: EvmAddress; amountIn: bigint; amountOutMin: bigint; payerIsUser: boolean; index: number }
+  | { kind: 'erc20-approve'; target: EvmAddress; spender: EvmAddress; amount: bigint; index: number }
+  | { kind: 'erc20-transfer'; target: EvmAddress; recipient: EvmAddress; amount: bigint; index: number }
   | { kind: 'permit2'; target: EvmAddress; token: EvmAddress; spender: EvmAddress; amount: bigint; index: number }
 
 function v3PathTokens(path: EvmHex): { tokenIn: EvmAddress; tokenOut: EvmAddress } {
@@ -53,7 +55,19 @@ function decodeSemanticCall(
     const decoded = decodeFunctionData({ abi: exactInputAbi, data: call.data })
     if (decoded.functionName !== 'swap') throw new Error('Invalid exact-input call')
     const [tokenIn, tokenOut, recipient, amountIn, amountOutMin] = decoded.args
-    return { kind: 'swap', target: call.to, tokenIn, tokenOut, recipient, amountIn, amountOutMin, index }
+    return { kind: 'swap', target: call.to, tokenIn, tokenOut, recipient, amountIn, amountOutMin, payerIsUser: true, index }
+  }
+  if (decoder === 'erc20-approve-v1') {
+    const decoded = decodeFunctionData({ abi: erc20Abi, data: call.data })
+    if (decoded.functionName !== 'approve') throw new Error('Invalid ERC-20 approval call')
+    const [spender, amount] = decoded.args
+    return { kind: 'erc20-approve', target: call.to, spender, amount, index }
+  }
+  if (decoder === 'erc20-transfer-v1') {
+    const decoded = decodeFunctionData({ abi: erc20Abi, data: call.data })
+    if (decoded.functionName !== 'transfer') throw new Error('Invalid ERC-20 transfer call')
+    const [recipient, amount] = decoded.args
+    return { kind: 'erc20-transfer', target: call.to, recipient, amount, index }
   }
   if (decoder === 'permit2-approve-v1') {
     const decoded = decodeFunctionData({ abi: permit2Abi, data: call.data })
@@ -78,8 +92,7 @@ function decodeSemanticCall(
       ],
       inputs[0]!,
     )
-    if (!payerIsUser) throw new Error('Universal Router swap must debit the calling account')
-    return { kind: 'swap', target: call.to, ...v3PathTokens(path), recipient, amountIn, amountOutMin, index }
+    return { kind: 'swap', target: call.to, ...v3PathTokens(path), recipient, amountIn, amountOutMin, payerIsUser, index }
   }
   const exhaustive: never = decoder
   throw new Error(`No semantic decoder implemented for ${String(exhaustive)}`)
@@ -158,24 +171,11 @@ export async function validateProviderDexCalls(options: {
   }
   if (options.calls.length === 0) throw new Error('Boltz returned an empty DEX call bundle')
 
-  const approvals: Array<{ spender: EvmAddress; amount: bigint; index: number }> = []
   const semanticCalls: SemanticCall[] = []
 
   for (const [index, call] of options.calls.entries()) {
     const value = call.value ?? 0n
     const callSelector = selector(call.data)
-    if (sameAddress(call.to, options.tokenIn) && callSelector === '0x095ea7b3') {
-      if (value !== 0n) throw new Error('ERC-20 approval call must not send native value')
-      const decoded = decodeFunctionData({ abi: erc20Abi, data: call.data })
-      if (decoded.functionName !== 'approve') throw new Error('Invalid ERC-20 approval call')
-      const [spender, approvalAmount] = decoded.args
-      if (approvalAmount !== options.amountIn) {
-        throw new Error('ERC-20 approval amount does not exactly match the quoted input amount')
-      }
-      approvals.push({ spender, amount: approvalAmount, index })
-      continue
-    }
-
     const rule = rules.find(candidate => sameAddress(candidate.address, call.to))
     if (!rule) throw new Error(`Provider call target ${call.to} is not allowlisted`)
     const trustedFunction = rule.functions.find(candidate => candidate.selector.toLowerCase() === callSelector)
@@ -187,8 +187,9 @@ export async function validateProviderDexCalls(options: {
     semanticCalls.push(decodeSemanticCall(trustedFunction.decoder, call, index))
   }
 
-  if (approvals.length !== 1) throw new Error('Provider DEX bundle must contain one exact ERC-20 input approval')
   const swaps = semanticCalls.filter((item): item is Extract<SemanticCall, { kind: 'swap' }> => item.kind === 'swap')
+  const approvals = semanticCalls.filter((item): item is Extract<SemanticCall, { kind: 'erc20-approve' }> => item.kind === 'erc20-approve')
+  const transfers = semanticCalls.filter((item): item is Extract<SemanticCall, { kind: 'erc20-transfer' }> => item.kind === 'erc20-transfer')
   const permits = semanticCalls.filter((item): item is Extract<SemanticCall, { kind: 'permit2' }> => item.kind === 'permit2')
   if (swaps.length !== 1) throw new Error('Provider DEX bundle must contain one semantically decoded swap')
   if (permits.length > 1) throw new Error('Provider DEX bundle contains multiple Permit2 approvals')
@@ -198,21 +199,42 @@ export async function validateProviderDexCalls(options: {
   if (!sameAddress(swap.recipient, options.recipient)) throw new Error('Provider swap recipient does not match quote')
   if (swap.amountIn !== options.amountIn) throw new Error('Provider swap input amount does not match quote')
   if (swap.amountOutMin !== options.amountOutMin) throw new Error('Provider swap minimum output does not match quote')
-  const approval = approvals[0]!
-  if (permits.length === 0) {
-    if (!sameAddress(approval.spender, swap.target) || approval.index > swap.index) {
-      throw new Error('ERC-20 approval is not exactly scoped to the decoded swap target')
+  if (!swap.payerIsUser) {
+    if (approvals.length !== 0 || permits.length !== 0 || transfers.length !== 1) {
+      throw new Error('Pre-funded router bundle must contain one exact ERC-20 input transfer')
+    }
+    const transfer = transfers[0]!
+    if (
+      !sameAddress(transfer.target, options.tokenIn)
+      || !sameAddress(transfer.recipient, swap.target)
+      || transfer.amount !== options.amountIn
+      || transfer.index > swap.index
+    ) {
+      throw new Error('ERC-20 transfer is not exactly scoped to the decoded swap target')
     }
   } else {
-    const permit = permits[0]!
-    if (
-      !sameAddress(approval.spender, permit.target)
-      || !sameAddress(permit.token, options.tokenIn)
-      || !sameAddress(permit.spender, swap.target)
-      || permit.amount !== options.amountIn
-      || !(approval.index < permit.index && permit.index < swap.index)
-    ) {
-      throw new Error('Permit2 approval flow does not exactly match the decoded swap')
+    if (transfers.length !== 0 || approvals.length !== 1) {
+      throw new Error('Caller-funded DEX bundle must contain one exact ERC-20 input approval')
+    }
+    const approval = approvals[0]!
+    if (!sameAddress(approval.target, options.tokenIn) || approval.amount !== options.amountIn) {
+      throw new Error('ERC-20 approval does not exactly match the quoted input token and amount')
+    }
+    if (permits.length === 0) {
+      if (!sameAddress(approval.spender, swap.target) || approval.index > swap.index) {
+        throw new Error('ERC-20 approval is not exactly scoped to the decoded swap target')
+      }
+    } else {
+      const permit = permits[0]!
+      if (
+        !sameAddress(approval.spender, permit.target)
+        || !sameAddress(permit.token, options.tokenIn)
+        || !sameAddress(permit.spender, swap.target)
+        || permit.amount !== options.amountIn
+        || !(approval.index < permit.index && permit.index < swap.index)
+      ) {
+        throw new Error('Permit2 approval flow does not exactly match the decoded swap')
+      }
     }
   }
   return options.calls

@@ -10,9 +10,13 @@ import { encodeAbiParameters, encodeFunctionData, parseAbi, toFunctionSelector }
 const seed = '8'.repeat(64)
 const swapContract = '0x0000000000000000000000000000000000000010'
 const routerContract = '0x0000000000000000000000000000000000000d0e'
+const tokenA = '0x00000000000000000000000000000000000000ad'
+const tokenB = '0x0000000000000000000000000000000000000b7c'
 const runtimeHash = '0xf3df0a62b10f205b0f29768aa3d69e777154caaa179f64aabb0a4899c666b017'
 const swapAbi = parseAbi(['function swap(address tokenIn,address tokenOut,address recipient,uint256 amountIn,uint256 amountOutMin)'])
 const swapSelector = toFunctionSelector('swap(address,address,address,uint256,uint256)')
+const approveSelector = toFunctionSelector('approve(address,uint256)')
+const transferSelector = toFunctionSelector('transfer(address,uint256)')
 const testInvoice = 'lnbc1qqqqqqqpp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq2xy284'
 
 function persistedJson(value) {
@@ -29,11 +33,21 @@ function createTestSwapService(options) {
     trustByChainId: {
       42161: {
         erc20Swap: { address: swapContract, runtimeBytecodeHash: runtimeHash },
-        dexCallTargets: [{
-          address: routerContract,
-          runtimeBytecodeHash: runtimeHash,
-          functions: [{ selector: swapSelector, decoder: 'exact-input-v1' }],
-        }],
+        dexCallTargets: [
+          ...[tokenA, tokenB].map(address => ({
+            address,
+            runtimeBytecodeHash: runtimeHash,
+            functions: [
+              { selector: approveSelector, decoder: 'erc20-approve-v1' },
+              { selector: transferSelector, decoder: 'erc20-transfer-v1' },
+            ],
+          })),
+          {
+            address: routerContract,
+            runtimeBytecodeHash: runtimeHash,
+            functions: [{ selector: swapSelector, decoder: 'exact-input-v1' }],
+          },
+        ],
       },
     },
   })
