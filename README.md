@@ -27,6 +27,7 @@ the plain request types exported by this package.
 - Execute calls through ERC-4337 account abstraction only.
 - Coordinate Boltz swap-in and swap-out lifecycles.
 - Persist and resume swap/escrow operations through caller-provided storage.
+- Release or refund validated order escrows with receipt-bound, idempotent arbitration.
 - Derive per-trade AA owner accounts from a caller-provided marketplace seed.
 - Report deterministic usage watermarks for marketplace parent index recovery.
 
@@ -147,6 +148,25 @@ Unknown targets/selectors, native value, over-approval, extra router commands,
 and mismatched tokens, amounts, paths, or recipients are rejected before a
 provider side effect. Production operation stores should implement atomic
 `putIfAbsent`.
+
+## Order settlement
+
+Pass a `settlementAccount` only in an arbiter process that controls the EVM
+address named by the payment proof. Without it, the order policy advertises no
+financial actions. With it, the policy still authorizes `release` and `refund`
+per payment: encrypted proof params are resolved ephemerally and the configured
+account must exactly match that payment's arbiter.
+
+Settlement signs the MultiEscrow v7 EIP-712 arbitration, persists the first
+transaction or user-operation hash before waiting, and accepts completion only
+when the receipt contains the exact contract, trade, token, parties, amounts,
+and factors. A retry reconciles the original submission and never broadcasts a
+replacement. The durable record contains only those public on-chain bindings
+and submission hashes; decrypted params, proofs, provider bodies, and raw
+provider errors are not stored. If the process stops after the chain action but
+before its marketplace settlement event is published, the completed tombstone
+re-exposes only the already-committed action. Replaying it reverifies the
+receipt, returns the original protected proof, and performs no broadcast.
 
 ### Durable operation record schema
 

@@ -143,7 +143,7 @@ function expectedIdentityAddress(
   return identity?.address ? address(identity.address, label) : undefined
 }
 
-function validateExpectedEvidence(
+export function validateEvmExpectedEvidence(
   request: GenericPaymentValidationRequest,
   params: Record<string, unknown>,
   chainId: number,
@@ -448,7 +448,7 @@ export async function validateEvmMarketplacePayment(
     if (params.policyHash && hash(params.policyHash, 'policyHash').toLowerCase() !== configuredHash.toLowerCase()) {
       return { driver: 'evm', status: 'invalid', error: 'Payment proof policy hash does not match configured MultiEscrow runtime' }
     }
-    const expectedEvidenceError = validateExpectedEvidence(request, params, chainId, contractAddress, configuredHash)
+    const expectedEvidenceError = validateEvmExpectedEvidence(request, params, chainId, contractAddress, configuredHash)
     if (expectedEvidenceError) return { driver: 'evm', status: 'invalid', error: expectedEvidenceError }
     const validator = createEvmEscrowValidator({ chains })
     const expectedPaymentAmount = paymentAmount(params)

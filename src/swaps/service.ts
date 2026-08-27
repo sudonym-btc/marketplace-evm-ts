@@ -757,8 +757,8 @@ export function createEvmSwapService(options: SwapServiceOptions): EvmSwapServic
       }
     },
 
-    listActive() {
-      return options.store.list({
+    async listActive() {
+      const records = await options.store.list({
         status: [
           'external_payment_required',
           'initialised',
@@ -770,6 +770,7 @@ export function createEvmSwapService(options: SwapServiceOptions): EvmSwapServic
           'refunding',
         ],
       })
+      return records.filter(record => record.kind === 'swap_in' || record.kind === 'swap_out')
     },
   }
 }

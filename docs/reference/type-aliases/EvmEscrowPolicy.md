@@ -1,6 +1,6 @@
 # Type Alias: EvmEscrowPolicy
 
-> **EvmEscrowPolicy** = `MarketplaceDriverOrderPolicy`\<[`GenericPolicyPaymentState`](GenericPolicyPaymentState.md), [`EvmEscrowPaymentPolicy`](EvmEscrowPaymentPolicy.md), [`EvmPaymentAsset`](EvmPaymentAsset.md), [`GenericPaymentIntent`](GenericPaymentIntent.md), [`GenericPaymentValidationRequest`](GenericPaymentValidationRequest.md), [`GenericPaymentValidationResult`](GenericPaymentValidationResult.md), [`GenericPaymentSweepInput`](GenericPaymentSweepInput.md), [`GenericPaymentSweepState`](GenericPaymentSweepState.md), `GenericPaymentSettlementIntent`, `GenericPaymentSettlementState`, [`GenericSwapResumeContext`](GenericSwapResumeContext.md), [`GenericSwapResumeState`](GenericSwapResumeState.md)\> & `object`
+> **EvmEscrowPolicy** = `MarketplaceDriverOrderPolicy`\<[`GenericPolicyPaymentState`](GenericPolicyPaymentState.md), [`EvmEscrowPaymentPolicy`](EvmEscrowPaymentPolicy.md), [`EvmPaymentAsset`](EvmPaymentAsset.md), [`GenericPaymentIntent`](GenericPaymentIntent.md), [`GenericPaymentValidationRequest`](GenericPaymentValidationRequest.md), [`GenericPaymentValidationResult`](GenericPaymentValidationResult.md), [`GenericPaymentSweepInput`](GenericPaymentSweepInput.md), [`GenericPaymentSweepState`](GenericPaymentSweepState.md), [`GenericPaymentSettlementIntent`](GenericPaymentSettlementIntent.md), [`GenericPaymentSettlementState`](GenericPaymentSettlementState.md), [`GenericSwapResumeContext`](GenericSwapResumeContext.md), [`GenericSwapResumeState`](GenericSwapResumeState.md)\> & `object`
 
 ## Type Declaration
 

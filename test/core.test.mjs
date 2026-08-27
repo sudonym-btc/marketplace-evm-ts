@@ -8,6 +8,7 @@ import {
   createMarketplaceEvmClient,
   evmPayoutInvoiceDescription,
   evmPurchaseInvoiceDescription,
+  settleEvmMarketplacePayment,
 } from '../dist/index.js'
 import { multiEscrowAbi, multiEscrowRuntimeBytecodeHash } from '@sudonym-btc/marketplace-evm-contracts'
 import { erc20Abi } from '../dist/contracts/erc20.js'
@@ -18,7 +19,7 @@ import { deriveEvmOwnerAccount, deriveEvmSwapMaterial, deriveEvmTradeId } from '
 import { MemoryOperationStore } from '../dist/utils/store.js'
 import { executeWithPersistedSubmission } from '../dist/utils/execution.js'
 import { createChainRoutedEvmExecutor, createConfiguredEvmExecutor } from '../dist/aa/executor.js'
-import { createPublicClient, decodeFunctionData, encodeAbiParameters, encodeEventTopics, http } from 'viem'
+import { createPublicClient, decodeFunctionData, encodeAbiParameters, encodeEventTopics, http, recoverTypedDataAddress } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 
 function aaConfig() {
@@ -170,6 +171,538 @@ test('persisted submissions reconcile after a post-broadcast crash without rebro
   assert.equal(broadcasts, 1)
   assert.equal(reconciliations, 1)
   assert.deepEqual((await store.get(operation.id)).data.paymentSubmission, { txHash, userOperationHash })
+})
+
+test('EVM order settlement is explicit, receipt-bound, and idempotent', async () => {
+  const store = new MemoryOperationStore()
+  const chainId = 412346
+  const contractAddress = '0x0000000000000000000000000000000000000010'
+  const assetAddress = '0x0000000000000000000000000000000000000011'
+  const sellerAddress = '0x0000000000000000000000000000000000000012'
+  const buyerAddress = '0x0000000000000000000000000000000000000013'
+  const account = privateKeyToAccount('0x59c6995e998f97a5a0044966f09453811152280db9f94e9ec48b7cae4cf02b8c')
+  const tradeId = `0x${'4'.repeat(64)}`
+  const txHash = `0x${'5'.repeat(64)}`
+  const paymentFactor = 1000n
+  const clearParams = {
+    chainId,
+    contractAddress,
+    tradeId,
+    assetAddress,
+    sellerAddress,
+    buyerAddress,
+    arbiterAddress: account.address,
+    paymentAmount: '100',
+    bondAmount: '7',
+    escrowFee: '0',
+  }
+  const encryptedParams = {
+    encrypted: true,
+    version: 1,
+    scheme: 'nip44',
+    proofId: 'proof-1',
+    payload: 'ciphertext',
+  }
+  const log = {
+    address: contractAddress,
+    topics: encodeEventTopics({
+      abi: multiEscrowAbi,
+      eventName: 'Arbitrated',
+      args: { tradeId, token: assetAddress },
+    }),
+    data: encodeAbiParameters(
+      [
+        { type: 'address' },
+        { type: 'address' },
+        { type: 'uint256' },
+        { type: 'uint256' },
+        { type: 'uint256' },
+        { type: 'uint256' },
+      ],
+      [sellerAddress, buyerAddress, 100n, 7n, paymentFactor, paymentFactor],
+    ),
+  }
+  const chain = {
+    id: 'arbitrum-regtest',
+    chainId,
+    publicClient: {
+      chain: { id: chainId },
+      async waitForTransactionReceipt() {
+        return { status: 'success', logs: [log] }
+      },
+    },
+    nativeAsset: {
+      chainId,
+      address: '0x0000000000000000000000000000000000000000',
+      denomination: 'ETH',
+      decimals: 18,
+    },
+    accountAbstraction: aaConfig(),
+    multiEscrowAddress: contractAddress,
+  }
+  let broadcasts = 0
+  let settlementCall
+  const executor = {
+    async getAddress() { return account.address },
+    async execute(calls, options) {
+      broadcasts += 1
+      settlementCall = calls[0]
+      await options.onSubmitted({ txHash })
+      return { txHash, accountAddress: account.address }
+    },
+    async waitForSubmission() {
+      throw new Error('completed settlement must not reconcile or rebroadcast')
+    },
+  }
+  const client = createMarketplaceEvmClient({ chains: [chain], operationStore: store, executor })
+  const intent = {
+    paymentId: 'payment-1',
+    tradeId: 'trade-1',
+    orderGroupId: 'order-group-1',
+    listingAnchor: '30402:seller:listing',
+    createdAt: 1,
+    action: 'release',
+    proof: {
+      driver: 'evm',
+      terms: {
+        version: 1,
+        asset: { value: '100', denomination: 'USD', decimals: 6 },
+        parties: [],
+        lock: {
+          id: tradeId,
+          policyId: 'evm-order',
+          kind: 'contract',
+          amount: { value: '100', denomination: 'USD', decimals: 6 },
+          controls: [],
+        },
+      },
+      params: encryptedParams,
+    },
+    async decryptParams(proof) {
+      assert.equal(proof.params, encryptedParams)
+      return clearParams
+    },
+    amount: { value: '100', denomination: 'USD', decimals: 6 },
+  }
+
+  const settle = () => settleEvmMarketplacePayment({
+    chains: [chain],
+    operationStore: store,
+    settlementAccount: account,
+    settlementClient: () => client,
+    intent,
+  })
+  const first = []
+  for await (const state of settle()) first.push(state)
+  const repeated = []
+  for await (const state of settle()) repeated.push(state)
+
+  assert.equal(first.at(-1).type, 'completed')
+  assert.equal(first.at(-1).data.settlementTxHash, txHash)
+  assert.equal(first.at(-1).proof.params, encryptedParams)
+  assert.equal(repeated.at(-1).type, 'completed')
+  assert.equal(broadcasts, 1)
+  assert.equal((await store.get('evm-order-release-order-group-1-payment-1')).status, 'completed')
+  const decoded = decodeFunctionData({ abi: multiEscrowAbi, data: settlementCall.data })
+  assert.equal(decoded.functionName, 'arbitrate')
+  const [signedTradeId, signedPaymentFactor, signedBondFactor, signature] = decoded.args
+  assert.equal(await recoverTypedDataAddress({
+    domain: {
+      name: 'Nostr MultiEscrow',
+      version: '7',
+      chainId,
+      verifyingContract: contractAddress,
+    },
+    types: {
+      Arbitrate: [
+        { name: 'tradeId', type: 'bytes32' },
+        { name: 'paymentFactor', type: 'uint256' },
+        { name: 'bondFactor', type: 'uint256' },
+      ],
+    },
+    primaryType: 'Arbitrate',
+    message: {
+      tradeId: signedTradeId,
+      paymentFactor: signedPaymentFactor,
+      bondFactor: signedBondFactor,
+    },
+    signature,
+  }), account.address)
+})
+
+test('EVM order settlement rejects a financially mismatched Arbitrated event', async () => {
+  const store = new MemoryOperationStore()
+  const chainId = 412346
+  const contractAddress = '0x0000000000000000000000000000000000000020'
+  const assetAddress = '0x0000000000000000000000000000000000000021'
+  const sellerAddress = '0x0000000000000000000000000000000000000022'
+  const wrongSellerAddress = '0x0000000000000000000000000000000000000023'
+  const buyerAddress = '0x0000000000000000000000000000000000000024'
+  const account = privateKeyToAccount('0x59c6995e998f97a5a0044966f09453811152280db9f94e9ec48b7cae4cf02b8c')
+  const tradeId = `0x${'6'.repeat(64)}`
+  const txHash = `0x${'7'.repeat(64)}`
+  const log = {
+    address: contractAddress,
+    topics: encodeEventTopics({
+      abi: multiEscrowAbi,
+      eventName: 'Arbitrated',
+      args: { tradeId, token: assetAddress },
+    }),
+    data: encodeAbiParameters(
+      [
+        { type: 'address' },
+        { type: 'address' },
+        { type: 'uint256' },
+        { type: 'uint256' },
+        { type: 'uint256' },
+        { type: 'uint256' },
+      ],
+      [wrongSellerAddress, buyerAddress, 100n, 0n, 1000n, 1000n],
+    ),
+  }
+  const chain = {
+    id: 'arbitrum-mismatched-receipt',
+    chainId,
+    publicClient: {
+      async waitForTransactionReceipt() { return { status: 'success', logs: [log] } },
+    },
+    nativeAsset: {
+      chainId,
+      address: '0x0000000000000000000000000000000000000000',
+      denomination: 'ETH',
+      decimals: 18,
+    },
+    accountAbstraction: aaConfig(),
+    multiEscrowAddress: contractAddress,
+  }
+  let broadcasts = 0
+  const executor = {
+    async getAddress() { return account.address },
+    async execute(_calls, options) {
+      broadcasts += 1
+      await options.onSubmitted({ txHash })
+      return { txHash, accountAddress: account.address }
+    },
+  }
+  const client = createMarketplaceEvmClient({ chains: [chain], operationStore: store, executor })
+  const intent = {
+    paymentId: 'payment-mismatched-receipt',
+    tradeId: 'trade-mismatched-receipt',
+    orderGroupId: 'order-mismatched-receipt',
+    listingAnchor: '30402:seller:listing',
+    createdAt: 1,
+    action: 'release',
+    proof: {
+      driver: 'evm',
+      params: {
+        chainId,
+        contractAddress,
+        tradeId,
+        assetAddress,
+        sellerAddress,
+        buyerAddress,
+        arbiterAddress: account.address,
+        paymentAmount: '100',
+        bondAmount: '0',
+        escrowFee: '0',
+      },
+    },
+    amount: { value: '100', denomination: 'USD', decimals: 6 },
+  }
+
+  await assert.rejects(async () => {
+    for await (const _state of settleEvmMarketplacePayment({
+      chains: [chain],
+      operationStore: store,
+      settlementAccount: account,
+      settlementClient: () => client,
+      intent,
+    })) {
+      // Drain the settlement stream so receipt verification runs.
+    }
+  }, /missing the exact Arbitrated event/)
+  assert.equal(broadcasts, 1)
+  const record = await store.get('evm-order-release-order-mismatched-receipt-payment-mismatched-receipt')
+  assert.equal(record.status, 'settling')
+  assert.equal(record.error, 'Unable to settle EVM escrow')
+})
+
+test('EVM order settlement recovers one persisted submission after restart without leaking provider errors', async () => {
+  const store = new MemoryOperationStore()
+  const chainId = 412346
+  const contractAddress = '0x0000000000000000000000000000000000000030'
+  const assetAddress = '0x0000000000000000000000000000000000000031'
+  const sellerAddress = '0x0000000000000000000000000000000000000032'
+  const buyerAddress = '0x0000000000000000000000000000000000000033'
+  const account = privateKeyToAccount('0x59c6995e998f97a5a0044966f09453811152280db9f94e9ec48b7cae4cf02b8c')
+  const tradeId = `0x${'8'.repeat(64)}`
+  const txHash = `0x${'9'.repeat(64)}`
+  const userOperationHash = `0x${'a'.repeat(64)}`
+  const providerSecret = 'provider-secret-body-should-never-be-persisted'
+  const log = {
+    address: contractAddress,
+    topics: encodeEventTopics({
+      abi: multiEscrowAbi,
+      eventName: 'Arbitrated',
+      args: { tradeId, token: assetAddress },
+    }),
+    data: encodeAbiParameters(
+      [
+        { type: 'address' },
+        { type: 'address' },
+        { type: 'uint256' },
+        { type: 'uint256' },
+        { type: 'uint256' },
+        { type: 'uint256' },
+      ],
+      [sellerAddress, buyerAddress, 103n, 4n, 0n, 0n],
+    ),
+  }
+  const chain = {
+    id: 'arbitrum-order-recovery',
+    chainId,
+    publicClient: {
+      async getTransactionReceipt() { return null },
+      async waitForTransactionReceipt() { return { status: 'success', logs: [log] } },
+    },
+    nativeAsset: {
+      chainId,
+      address: '0x0000000000000000000000000000000000000000',
+      denomination: 'ETH',
+      decimals: 18,
+    },
+    accountAbstraction: aaConfig(),
+    multiEscrowAddress: contractAddress,
+  }
+  let broadcasts = 0
+  const crashingExecutor = {
+    async getAddress() { return account.address },
+    async execute(_calls, options) {
+      broadcasts += 1
+      await options.onSubmitted({ userOperationHash })
+      throw new Error(providerSecret)
+    },
+  }
+  const crashingClient = createMarketplaceEvmClient({
+    chains: [chain],
+    operationStore: store,
+    executor: crashingExecutor,
+  })
+  const intent = {
+    paymentId: 'payment-restart',
+    tradeId: 'trade-restart',
+    orderGroupId: 'order-restart',
+    listingAnchor: '30402:seller:listing',
+    createdAt: 1,
+    action: 'refund',
+    proof: {
+      driver: 'evm',
+      params: {
+        chainId,
+        contractAddress,
+        tradeId,
+        assetAddress,
+        sellerAddress,
+        buyerAddress,
+        arbiterAddress: account.address,
+        paymentAmount: '100',
+        bondAmount: '4',
+        escrowFee: '3',
+      },
+    },
+    amount: { value: '100', denomination: 'USD', decimals: 6 },
+  }
+
+  await assert.rejects(async () => {
+    for await (const _state of settleEvmMarketplacePayment({
+      chains: [chain],
+      operationStore: store,
+      settlementAccount: account,
+      settlementClient: () => crashingClient,
+      intent,
+    })) {
+      // Drain the settlement stream until the simulated post-submit crash.
+    }
+  }, new RegExp(providerSecret))
+
+  const operationId = 'evm-order-refund-order-restart-payment-restart'
+  const pending = await store.get(operationId)
+  assert.equal(pending.status, 'settling')
+  assert.equal(pending.error, 'Unable to settle EVM escrow')
+  assert.deepEqual(pending.data.settlementSubmission, { userOperationHash })
+  assert.ok(!JSON.stringify(pending).includes(providerSecret))
+  assert.equal(pending.data.proof, undefined)
+
+  let reconciliations = 0
+  let replayBroadcasts = 0
+  const recoveringExecutor = {
+    async getAddress() { return account.address },
+    async execute() {
+      replayBroadcasts += 1
+      throw new Error('startup recovery must not rebroadcast')
+    },
+    async waitForSubmission(submission) {
+      reconciliations += 1
+      assert.deepEqual(submission, { userOperationHash })
+      return { txHash, userOperationHash, accountAddress: account.address }
+    },
+  }
+  const restartedPolicy = createEvmEscrowPolicy({
+    chains: [chain],
+    operationStore: store,
+    settlementAccount: account,
+    settlementExecutor: recoveringExecutor,
+  })
+  const states = []
+  for await (const state of restartedPolicy.resumeSwapOperations({
+    seed: 'b'.repeat(64),
+    highWaterMark: 0,
+    nextUnusedIndex: 1,
+    unusedWindow: 1,
+    discovery: {},
+  })) states.push(state)
+
+  assert.ok(states.some(state => state.type === 'progress' && /Reconciled EVM order refund/.test(state.status)))
+  assert.equal(broadcasts, 1)
+  assert.equal(reconciliations, 1)
+  const completed = await store.get(operationId)
+  assert.equal(completed.status, 'completed')
+  assert.equal(completed.txHash, txHash)
+  assert.equal(completed.error, undefined)
+  assert.deepEqual(completed.data.settlementSubmission, { txHash, userOperationHash })
+  assert.ok(!JSON.stringify(completed).includes(providerSecret))
+
+  const encryptedParams = {
+    encrypted: true,
+    version: 1,
+    scheme: 'nip44',
+    proofId: 'completed-order-replay',
+    payload: 'protected-payment-proof',
+  }
+  const clearReplayParams = {
+    chainId,
+    contractAddress,
+    contractBytecodeHash: multiEscrowRuntimeBytecodeHash,
+    policyHash: multiEscrowRuntimeBytecodeHash,
+    policyType: 'evm:multi-escrow',
+    policyId: `evm:${chainId}:${contractAddress.toLowerCase()}`,
+    txHash: `0x${'c'.repeat(64)}`,
+    tradeId,
+    assetAddress,
+    sellerAddress,
+    buyerAddress,
+    arbiterAddress: account.address,
+    paymentAmount: '100',
+    bondAmount: '4',
+    escrowFee: '3',
+    fundedValue: '107',
+    denomination: 'USD',
+    currency: 'USD',
+    decimals: 6,
+    unlockAt: '1800000000',
+    timeoutClaimantAddress: sellerAddress,
+    contextHash: `0x${'d'.repeat(64)}`,
+    recycleCovenantHash: `0x${'0'.repeat(64)}`,
+  }
+  const protectedProof = { driver: 'evm', params: encryptedParams }
+  const validationRequest = {
+    driver: 'evm',
+    proof: protectedProof,
+    expected: {
+      amount: { value: '100', currency: 'USD', denomination: 'USD', decimals: 6 },
+      asset: {
+        currency: 'USD',
+        denomination: 'USD',
+        decimals: 6,
+        assetId: `${chainId}:${assetAddress.toLowerCase()}`,
+        chainId,
+      },
+      contract: { chainId, address: contractAddress },
+      participants: {
+        buyer: { address: buyerAddress },
+        seller: { address: sellerAddress },
+        arbiter: { address: account.address },
+      },
+      fee: { value: '3', currency: 'USD', denomination: 'USD', decimals: 6 },
+    },
+    async decryptParams(proof) {
+      assert.equal(proof, protectedProof)
+      return clearReplayParams
+    },
+  }
+  const ordinaryPolicy = createEvmEscrowPolicy({
+    chains: [chain],
+    operationStore: new MemoryOperationStore(),
+    settlementAccount: account,
+    settlementExecutor: recoveringExecutor,
+  })
+  const ordinaryValidation = await ordinaryPolicy.validatePayment(validationRequest)
+  assert.notEqual(ordinaryValidation.status, 'valid')
+
+  const tombstoneValidation = await restartedPolicy.validatePayment(validationRequest)
+  assert.equal(tombstoneValidation.status, 'valid')
+  assert.equal(tombstoneValidation.data.completedSettlementReplay, true)
+  assert.deepEqual(await restartedPolicy.settlementActionsForPayment(validationRequest), ['refund'])
+
+  const replayIntent = {
+    ...intent,
+    proof: protectedProof,
+    decryptParams: validationRequest.decryptParams,
+    expected: validationRequest.expected,
+  }
+  const replayStates = []
+  for await (const state of restartedPolicy.settlePayment(replayIntent)) replayStates.push(state)
+  const replayed = replayStates.at(-1)
+  assert.equal(replayed.type, 'completed')
+  assert.equal(replayed.data.replayed, true)
+  assert.equal(replayed.data.settlementTxHash, txHash)
+  assert.equal(replayed.proof, protectedProof)
+  assert.equal(replayed.proof.params, encryptedParams)
+  assert.ok(!JSON.stringify(await store.get(operationId)).includes(encryptedParams.payload))
+  await assert.rejects(async () => {
+    for await (const _state of restartedPolicy.settlePayment({ ...replayIntent, action: 'release' })) {
+      // A completed refund tombstone must not authorize the opposite action.
+    }
+  }, /already bound to a different completed settlement operation/)
+  assert.equal(replayBroadcasts, 0)
+  assert.equal(broadcasts, 1)
+  assert.equal(reconciliations, 1)
+})
+
+test('EVM escrow only advertises settlement actions authorized for the payment arbiter', async () => {
+  const options = { chains: [], operationStore: new MemoryOperationStore() }
+  assert.deepEqual(createEvmEscrowPolicy(options).settlementActions, [])
+  const account = privateKeyToAccount(`0x${'7'.repeat(64)}`)
+  const otherAccount = privateKeyToAccount(`0x${'8'.repeat(64)}`)
+  const policy = createEvmEscrowPolicy({ ...options, settlementAccount: account })
+  assert.deepEqual(policy.settlementActions, ['release', 'refund'])
+  assert.deepEqual(await policy.settlementActionsForPayment({
+    driver: 'evm',
+    proof: { driver: 'evm', params: { arbiterAddress: account.address } },
+  }), ['release', 'refund'])
+  assert.deepEqual(await policy.settlementActionsForPayment({
+    driver: 'evm',
+    proof: { driver: 'evm', params: { arbiterAddress: otherAccount.address } },
+  }), [])
+
+  const encryptedParams = {
+    encrypted: true,
+    version: 1,
+    scheme: 'nip44',
+    proofId: 'arbiter-capability',
+    payload: 'ciphertext',
+  }
+  let decrypted = 0
+  assert.deepEqual(await policy.settlementActionsForPayment({
+    driver: 'evm',
+    proof: { driver: 'evm', params: encryptedParams },
+    async decryptParams(proof) {
+      decrypted += 1
+      assert.equal(proof.params, encryptedParams)
+      return { arbiterAddress: account.address }
+    },
+  }), ['release', 'refund'])
+  assert.equal(decrypted, 1)
 })
 
 test('configured executor routing exposes and delegates persisted submission recovery', async () => {

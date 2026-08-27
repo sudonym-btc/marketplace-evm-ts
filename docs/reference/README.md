@@ -103,6 +103,8 @@
 - [GenericPaymentIdentity](type-aliases/GenericPaymentIdentity.md)
 - [GenericPaymentIntent](type-aliases/GenericPaymentIntent.md)
 - [GenericPaymentProof](type-aliases/GenericPaymentProof.md)
+- [GenericPaymentSettlementIntent](type-aliases/GenericPaymentSettlementIntent.md)
+- [GenericPaymentSettlementState](type-aliases/GenericPaymentSettlementState.md)
 - [GenericPaymentSweepInput](type-aliases/GenericPaymentSweepInput.md)
 - [GenericPaymentSweepState](type-aliases/GenericPaymentSweepState.md)
 - [GenericPaymentValidationRequest](type-aliases/GenericPaymentValidationRequest.md)
@@ -136,3 +138,4 @@
 - [createMarketplaceEvmClient](functions/createMarketplaceEvmClient.md)
 - [evmPayoutInvoiceDescription](functions/evmPayoutInvoiceDescription.md)
 - [evmPurchaseInvoiceDescription](functions/evmPurchaseInvoiceDescription.md)
+- [settleEvmMarketplacePayment](functions/settleEvmMarketplacePayment.md)

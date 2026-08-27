@@ -43,7 +43,9 @@
     "check": "tsc --noEmit",
     "docs": "npm run docs:api",
     "docs:api": "typedoc --plugin typedoc-plugin-markdown --tsconfig tsconfig.json --name \"Marketplace EVM Driver\" --out docs/reference --readme none --githubPages false --hideBreadcrumbs true --hidePageHeader true --disableSources src/index.ts",
+    "pretest": "npm run build",
     "test": "node --test test/*.test.mjs",
+    "pretest:integration": "npm run build",
     "test:integration": "node --test --test-concurrency=1 test/integration/*.test.mjs",
     "prepack": "npm run build"
   },

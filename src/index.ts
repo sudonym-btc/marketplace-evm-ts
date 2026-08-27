@@ -10,6 +10,7 @@ export { createEvmEscrowValidator } from './validation/escrowPaymentValidator.js
 export { createEvmAuctionPolicy } from './marketplace/auctionPolicy.js'
 export { createEvmEscrowPolicy } from './marketplace/escrowPolicy.js'
 export { evmPayoutInvoiceDescription, evmPurchaseInvoiceDescription } from './marketplace/invoices.js'
+export { settleEvmMarketplacePayment } from './marketplace/settlement.js'
 export { createEvmSwapService, SwapAmountLimitError } from './swaps/service.js'
 export { MemoryOperationStore } from './utils/store.js'
 
@@ -128,6 +129,8 @@ export type {
   GenericBolt11PaymentRequest,
   GenericPaymentIdentity,
   GenericPaymentIntent,
+  GenericPaymentSettlementIntent,
+  GenericPaymentSettlementState,
   GenericPaymentProof,
   GenericPaymentSweepInput,
   GenericPaymentSweepState,
