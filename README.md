@@ -146,8 +146,9 @@ const boltz = {
 
 Unknown targets/selectors, native value, over-approval, extra router commands,
 and mismatched tokens, amounts, paths, or recipients are rejected before a
-provider side effect. Production operation stores should implement atomic
-`putIfAbsent`.
+provider side effect. Production operation stores must implement atomic
+`putIfAbsent` before they can execute order settlements (and should implement
+it for every other funds-moving operation).
 
 ## Order settlement
 
@@ -161,12 +162,16 @@ Settlement signs the MultiEscrow v7 EIP-712 arbitration, persists the first
 transaction or user-operation hash before waiting, and accepts completion only
 when the receipt contains the exact contract, trade, token, parties, amounts,
 and factors. A retry reconciles the original submission and never broadcasts a
-replacement. The durable record contains only those public on-chain bindings
-and submission hashes; decrypted params, proofs, provider bodies, and raw
-provider errors are not stored. If the process stops after the chain action but
-before its marketplace settlement event is published, the completed tombstone
-re-exposes only the already-committed action. Replaying it reverifies the
-receipt, returns the original protected proof, and performs no broadcast.
+replacement. Release and refund share one chain-and-trade-scoped operation key;
+atomic insertion grants broadcast ownership to exactly one caller. Concurrent
+callers cannot choose the opposite action, and may only reconcile the bound
+action after a submission hash exists. The durable record contains only those
+public on-chain bindings and submission hashes; decrypted params, proofs,
+provider bodies, and raw provider errors are not stored. If the process stops
+after the chain action but before its marketplace settlement event is
+published, the completed tombstone re-exposes only the already-committed
+action. Replaying it reverifies the receipt, returns the original protected
+proof, and performs no broadcast.
 
 ### Durable operation record schema
 

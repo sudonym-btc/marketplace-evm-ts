@@ -1,11 +1,10 @@
-import { resolveMarketplaceDriverPaymentProofParams } from '@sudonym-btc/marketplace-driver-interface'
-
 import { evmEscrowPolicies } from './policies.js'
 import { EvmMarketplacePolicyBase } from './policyBase.js'
 import {
   completedEvmOrderSettlements,
   recoverEvmOrderSettlements,
   replayCompletedEvmMarketplacePayment,
+  settlementActionsForEvmMarketplacePayment,
   settleEvmMarketplacePayment,
 } from './settlement.js'
 import type {
@@ -80,27 +79,14 @@ class EvmEscrowPolicyImpl
   ): Promise<readonly ('release' | 'refund')[]> {
     if (!this.settlementAccount) return []
     try {
-      const params = await resolveMarketplaceDriverPaymentProofParams(request.proof, request.decryptParams)
-      const arbiterAddress = params.arbiterAddress
-      if (typeof arbiterAddress !== 'string' || !/^0x[a-fA-F0-9]{40}$/.test(arbiterAddress)) return []
-      if (arbiterAddress.toLowerCase() !== this.settlementAccount.address.toLowerCase()) return []
-      const chainId = params.chainId
-      const rawTradeId = params.tradeId
-      const tradeId = typeof rawTradeId === 'string'
-        ? (rawTradeId.startsWith('0x') ? rawTradeId : `0x${rawTradeId}`).toLowerCase()
-        : undefined
-      const candidates = typeof chainId === 'number' && tradeId
-        ? (await this.operationStore.list({ kind: 'escrow', status: 'completed', chainId }))
-          .filter(record => record.data.purpose === 'order' && record.tradeId?.toLowerCase() === tradeId)
-        : []
-      if (candidates.length === 0) return this.settlementActions
-      const completed = await completedEvmOrderSettlements({
+      const executor = this.settlementClient().executor
+      return settlementActionsForEvmMarketplacePayment({
         chains: this.chains,
         operationStore: this.operationStore,
-        request,
         settlementAccount: this.settlementAccount,
+        canReconcileSubmitted: Boolean(executor?.waitForSubmission),
+        request,
       })
-      return completed.length === 1 ? [completed[0].action] : []
     } catch {
       return []
     }

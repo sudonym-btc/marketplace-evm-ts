@@ -155,7 +155,10 @@ export type EvmOperationQuery = {
 export type EvmOperationStore = {
   get(id: string): Promise<EvmOperationRecord | null>
   put(record: EvmOperationRecord): Promise<void>
-  /** Atomically insert a record when it does not already exist. */
+  /**
+   * Atomically insert a record when it does not already exist. Order
+   * settlement requires this primitive and fails closed when it is absent.
+   */
   putIfAbsent?(record: EvmOperationRecord): Promise<boolean>
   list(query?: EvmOperationQuery): Promise<EvmOperationRecord[]>
   delete(id: string): Promise<void>

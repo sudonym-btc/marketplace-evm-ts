@@ -100,7 +100,8 @@
 
 > **putIfAbsent**(`record`): `Promise`\<`boolean`\>
 
-Atomically insert a record when it does not already exist.
+Atomically insert a record when it does not already exist. Order
+settlement requires this primitive and fails closed when it is absent.
 
 #### Parameters
 
