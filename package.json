@@ -40,10 +40,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "generate:boltz-openapi": "node scripts/generate-boltz-openapi.mjs",
+    "generate:boltz-abi": "node scripts/generate-boltz-abi.mjs",
+    "check:generated": "node scripts/generate-boltz-openapi.mjs --check && node scripts/generate-boltz-abi.mjs --check",
     "check": "tsc --noEmit",
     "docs": "npm run docs:api",
-    "docs:api": "typedoc --plugin typedoc-plugin-markdown --tsconfig tsconfig.json --name \"Marketplace EVM Driver\" --out docs/reference --readme none --githubPages false --hideBreadcrumbs true --hidePageHeader true --disableSources src/index.ts",
-    "pretest": "npm run build",
+    "docs:api": "nmdk-typedoc --plugin typedoc-plugin-markdown --tsconfig tsconfig.json --name \"Marketplace EVM Driver\" --out docs/reference --readme none --githubPages false --hideBreadcrumbs true --hidePageHeader true --disableSources src/index.ts",
+    "pretest": "npm run check:generated && npm run build",
     "test": "node --test test/*.test.mjs",
     "pretest:integration": "npm run build",
     "test:integration": "node --test --test-concurrency=1 test/integration/*.test.mjs",
@@ -54,15 +56,14 @@
     "@sudonym-btc/marketplace-driver-interface": "0.1.0",
     "boltz-core": "^5.0.0",
     "openapi-fetch": "^0.17.0",
-    "ox": "0.11.3",
-    "permissionless": "0.3.5",
-    "viem": "2.55.0"
+    "permissionless": "0.4.1",
+    "viem": "2.56.5"
   },
   "devDependencies": {
-    "openapi-typescript": "^7.13.0",
-    "typedoc": "0.28.19",
-    "typedoc-plugin-markdown": "4.12.0",
-    "typescript": "^5.8.2"
+    "typescript": "^7.0.2",
+    "@sudonym-btc/nmdk-typescript-tooling": "0.1.0",
+    "@sudonym-btc/nmdk-openapi-tooling": "0.1.0",
+    "ox": "0.11.3"
   },
   "engines": {
     "node": ">=20"
