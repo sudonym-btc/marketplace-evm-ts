@@ -3,7 +3,7 @@ import { EvmMarketplacePolicyBase } from './policyBase.js'
 import { isMarketplaceDriverEncryptedPaymentProofParams } from '@sudonym-btc/marketplace-driver-interface'
 import { normalizeAddress } from '../utils/hex.js'
 import { decodeEventLog, hashStruct, keccak256, toHex } from 'viem'
-import { multiEscrowAbi } from '@sudonym-btc/marketplace-evm-contracts'
+import { multiEscrowAbi, multiEscrowDomain, multiEscrowTypes, multiEscrowFactorScale } from '@sudonym-btc/marketplace-evm-contracts'
 import { evmEscrowContractBytecodeHash } from './policies.js'
 import { sha256Hex } from '../utils/sha256.js'
 import type {
@@ -18,38 +18,11 @@ import type {
 import type { EvmAddress, EvmHash, EvmHex, EvmOperationRecord, NamedEvmCall } from '../types.js'
 import type { MarketplaceEvmClient } from '../client.js'
 
-const arbitrateTypes = {
-  Arbitrate: [
-    { name: 'tradeId', type: 'bytes32' },
-    { name: 'paymentFactor', type: 'uint256' },
-    { name: 'bondFactor', type: 'uint256' },
-  ],
-} as const
+const arbitrateTypes = { Arbitrate: multiEscrowTypes.Arbitrate } as const
 
-const tradeTermsTypes = {
-  TradeTerms: [
-    { name: 'tradeId', type: 'bytes32' },
-    { name: 'buyer', type: 'address' },
-    { name: 'seller', type: 'address' },
-    { name: 'arbiter', type: 'address' },
-    { name: 'token', type: 'address' },
-    { name: 'paymentAmount', type: 'uint256' },
-    { name: 'bondAmount', type: 'uint256' },
-    { name: 'unlockAt', type: 'uint256' },
-    { name: 'timeoutClaimant', type: 'address' },
-    { name: 'escrowFee', type: 'uint256' },
-    { name: 'contextHash', type: 'bytes32' },
-    { name: 'recycleCovenantHash', type: 'bytes32' },
-  ],
-} as const
+const tradeTermsTypes = { TradeTerms: multiEscrowTypes.TradeTerms } as const
 
-const recycleTypes = {
-  Recycle: [
-    { name: 'sourceTradeId', type: 'bytes32' },
-    { name: 'targetTermsHash', type: 'bytes32' },
-    { name: 'deadline', type: 'uint256' },
-  ],
-} as const
+const recycleTypes = { Recycle: multiEscrowTypes.Recycle } as const
 
 type RecycleTarget = {
   chainId: number
@@ -395,8 +368,7 @@ class EvmAuctionPolicyImpl
     }
     const signature = await this.settlementAccount.signTypedData({
       domain: {
-        name: 'Nostr MultiEscrow',
-        version: '7',
+        ...multiEscrowDomain,
         chainId,
         verifyingContract: contractAddress,
       },
@@ -520,8 +492,7 @@ class EvmAuctionPolicyImpl
     })
     const arbiterSignature = await this.settlementAccount.signTypedData({
       domain: {
-        name: 'Nostr MultiEscrow',
-        version: '7',
+        ...multiEscrowDomain,
         chainId: target.chainId,
         verifyingContract: target.contractAddress,
       },
@@ -661,7 +632,7 @@ class EvmAuctionPolicyImpl
               timeoutClaimantAddress: target.timeoutClaimantAddress,
               unlockAt: unlockAt.toString(),
               escrowFee: feeAmount,
-              arbitration: { type: 'continuous', denominator: '1000' },
+              arbitration: { type: 'continuous', denominator: String(multiEscrowFactorScale) },
             },
           },
         },

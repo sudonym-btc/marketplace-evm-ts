@@ -58,10 +58,10 @@ export type BoltzSubmarineSwapRequest = Omit<OpenApiSubmarineRequest, 'invoice'>
 
 export type BoltzSubmarineSwapResponse = Omit<
   OpenApiSubmarineResponse,
-  'address' | 'expectedAmount' | 'timeoutBlockHeight'
+  'address' | 'claimAddress' | 'expectedAmount' | 'timeoutBlockHeight'
 > & {
   address?: EvmAddress
-  /** EVM submarine swaps return this at runtime, but Boltz 3.12.1's OpenAPI schema omits it. */
+  /** EVM refinement of the shared wire schema's optional claim address. */
   claimAddress?: EvmAddress
   expectedAmount?: number
   timeoutBlockHeight: number

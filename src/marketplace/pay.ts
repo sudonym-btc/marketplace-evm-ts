@@ -1,3 +1,4 @@
+import { multiEscrowFactorScale } from '@sudonym-btc/marketplace-evm-contracts'
 import { encodeAbiParameters, keccak256, toHex } from 'viem'
 
 import { erc20Abi } from '../contracts/erc20.js'
@@ -129,7 +130,7 @@ function evmPaymentTerms(options: {
         escrowFee,
         arbitration: {
           type: 'continuous',
-          denominator: '1000',
+          denominator: String(multiEscrowFactorScale),
         },
       },
     },

@@ -1,6 +1,6 @@
 # Type Alias: BoltzSubmarineSwapResponse
 
-> **BoltzSubmarineSwapResponse** = `Omit`\<`OpenApiSubmarineResponse`, `"address"` \| `"expectedAmount"` \| `"timeoutBlockHeight"`\> & `object`
+> **BoltzSubmarineSwapResponse** = `Omit`\<`OpenApiSubmarineResponse`, `"address"` \| `"claimAddress"` \| `"expectedAmount"` \| `"timeoutBlockHeight"`\> & `object`
 
 ## Type Declaration
 
@@ -12,7 +12,7 @@
 
 > `optional` **claimAddress?**: [`EvmAddress`](EvmAddress.md)
 
-EVM submarine swaps return this at runtime, but Boltz 3.12.1's OpenAPI schema omits it.
+EVM refinement of the shared wire schema's optional claim address.
 
 ### expectedAmount?
 

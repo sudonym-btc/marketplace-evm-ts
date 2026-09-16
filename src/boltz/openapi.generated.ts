@@ -179,6 +179,15 @@ export interface paths {
                         "application/json": components["schemas"]["ErrorResponse"];
                     };
                 };
+                /** @description A swap with that invoice or preimage hash exists already */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -235,6 +244,15 @@ export interface paths {
                 };
                 /** @description Error that caused the request to fail */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description That swap has an invoice already */
+                409: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -380,6 +398,15 @@ export interface paths {
                 };
                 /** @description Error that caused the request to fail */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description That swap does not have a preimage available yet */
+                404: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -712,6 +739,15 @@ export interface paths {
                         "application/json": components["schemas"]["ErrorResponse"];
                     };
                 };
+                /** @description A swap with that preimage hash exists already */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -982,6 +1018,15 @@ export interface paths {
                         "application/json": components["schemas"]["ErrorResponse"];
                     };
                 };
+                /** @description A swap with that preimage hash exists already */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -1087,6 +1132,15 @@ export interface paths {
                 };
                 /** @description When no Chain Swap with the ID could be found */
                 404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description The server claim for that swap succeeded already */
+                409: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -1335,6 +1389,15 @@ export interface paths {
                         "application/json": components["schemas"]["ErrorResponse"];
                     };
                 };
+                /** @description The quote cannot be renegotiated because a refund was signed already */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
             };
         };
         put?: never;
@@ -1366,6 +1429,15 @@ export interface paths {
                 };
                 /** @description When the Chain Swap is not eligible for a new quote */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description The quote cannot be renegotiated because a refund was signed already */
+                409: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -2458,6 +2530,15 @@ export interface paths {
                         "application/json": components["schemas"]["ErrorResponse"];
                     };
                 };
+                /** @description The Ethereum integration is not enabled */
+                501: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
             };
         };
         put?: never;
@@ -2608,6 +2689,15 @@ export interface paths {
                 };
                 /** @description Error that caused the query for the transaction to fail */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description No transaction with that id was found */
+                404: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -3589,6 +3679,8 @@ export interface components {
             blindingKey?: string;
             /** @description Referral ID used for the swap */
             referralId?: string;
+            /** @description EVM address used to claim the submarine swap. Schema correction: the EVM response includes this field but the published OpenAPI document omits it. */
+            claimAddress?: string;
         };
         SubmarineTransaction: {
             /** @description ID the lockup transaction */
@@ -3886,6 +3978,8 @@ export interface components {
                 id?: string;
                 /** @description Raw hex of the transaction */
                 hex?: string;
+                /** @description Whether the transaction is confirmed; only set for `transaction.refunded`. Clients can only request cooperative refund signatures after this is `true` */
+                confirmed?: boolean;
             };
         };
         RescueRequest: {
@@ -3898,7 +3992,7 @@ export interface components {
             pagination?: {
                 /** @description Starting key derivation index for pagination. Must be provided together with limit */
                 startIndex: number;
-                /** @description Number of keys to scan from startIndex. Must be provided together with startIndex. Must be at least 1 */
+                /** @description Number of keys to scan from startIndex. Must be provided together with startIndex. Must be between 1 and 1000 */
                 limit: number;
             };
         } | {
@@ -3930,6 +4024,8 @@ export interface components {
             keyIndex: number;
             /** @description Preimage hash of the swap */
             preimageHash: string;
+            /** @description Invoice of the swap, if set. Only returned for submarine swaps */
+            invoice?: string;
             /** @description Block height at which the rescuable onchain HTLCs will time out */
             timeoutBlockHeight: number;
             /** @description Public key of the server */
@@ -3997,6 +4093,8 @@ export interface components {
             to: string;
             /** @description Hash of the preimage required to claim the swap */
             preimageHash?: string;
+            /** @description Invoice of the swap, if set. Only set for submarine and reverse swaps */
+            invoice?: string;
             claimDetails?: components["schemas"]["RestoreClaimDetails"];
             refundDetails?: components["schemas"]["RestoreRefundDetails"];
         };

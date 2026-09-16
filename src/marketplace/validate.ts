@@ -1,3 +1,4 @@
+import { multiEscrowFactorScale } from '@sudonym-btc/marketplace-evm-contracts'
 import { encodeAbiParameters, keccak256, toHex } from 'viem'
 import {
   resolveMarketplaceDriverPaymentProofParams,
@@ -283,7 +284,7 @@ function expectedEvmTerms(params: Record<string, unknown>): MarketplaceDriverPay
         escrowFee: fee,
         arbitration: {
           type: 'continuous',
-          denominator: '1000',
+          denominator: String(multiEscrowFactorScale),
         },
       },
     },

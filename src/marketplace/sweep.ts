@@ -1,4 +1,4 @@
-import { multiEscrowAbi } from '@sudonym-btc/marketplace-evm-contracts'
+import { multiEscrowAbi, multiEscrowDomain, multiEscrowTypes } from '@sudonym-btc/marketplace-evm-contracts'
 import { isMarketplaceDriverEncryptedPaymentProofParams } from '@sudonym-btc/marketplace-driver-interface'
 
 import type { MarketplaceEvmClient } from '../client.js'
@@ -53,13 +53,7 @@ type WithdrawableBalance = {
   amount: bigint
 }
 
-const withdrawTypes = {
-  Withdraw: [
-    { name: 'token', type: 'address' },
-    { name: 'destination', type: 'address' },
-    { name: 'nonce', type: 'uint256' },
-  ],
-} as const
+const withdrawTypes = { Withdraw: multiEscrowTypes.Withdraw } as const
 
 function stringValue(value: unknown, label: string): string {
   if (typeof value !== 'string' || value.length === 0) throw new Error(`Invalid ${label}`)
@@ -253,8 +247,7 @@ async function signWithdraw(options: {
   }) as bigint
   return owner.signTypedData({
     domain: {
-      name: 'Nostr MultiEscrow',
-      version: '7',
+      ...multiEscrowDomain,
       chainId: options.chainId,
       verifyingContract: options.contractAddress,
     },

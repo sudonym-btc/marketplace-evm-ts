@@ -1,59 +1,25 @@
-import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import openapiTS, { astToString, COMMENT_HEADER } from '@sudonym-btc/nmdk-openapi-tooling'
 
-const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const outputFile = resolve(rootDir, 'src/boltz/openapi.generated.ts')
-const cacheDir = resolve(rootDir, 'node_modules/.cache/marketplace-evm-ts')
-const tempSpecFile = resolve(cacheDir, 'boltz-openapi.json')
+// This pinned document also generates the Dart driver's Chopper models. Updating
+// a running backend must never silently change either driver's public types.
+export const boltzSchemaPath = fileURLToPath(new URL('../schemas/boltz.openapi.json', import.meta.url))
+const outputPath = fileURLToPath(new URL('../src/boltz/openapi.generated.ts', import.meta.url))
 
-function readSpecFromFile(path) {
-  return readFileSync(resolve(rootDir, path), 'utf8')
+export async function generateBoltzTypes({ check = false } = {}) {
+  const spec = JSON.parse(readFileSync(boltzSchemaPath, 'utf8'))
+  if (!spec.openapi || !spec.paths) throw new Error('Boltz schema must contain openapi and paths')
+  const generated = COMMENT_HEADER + astToString(await openapiTS(spec))
+  if (check) {
+    if (readFileSync(outputPath, 'utf8') !== generated) {
+      throw new Error('Boltz TypeScript types are stale; run npm run generate:boltz-openapi')
+    }
+  } else {
+    writeFileSync(outputPath, generated)
+  }
 }
 
-async function readSpecFromUrl(url) {
-  const response = await fetch(url)
-  if (!response.ok) throw new Error(`Unable to fetch Boltz OpenAPI spec from ${url}: ${response.status}`)
-  return await response.text()
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  await generateBoltzTypes({ check: process.argv.includes('--check') })
 }
-
-function readSpecFromDocker(container) {
-  return execFileSync(
-    'docker',
-    ['exec', container, 'cat', '/boltz-backend/dist/lib/api/static/swagger-spec.json'],
-    { encoding: 'utf8' },
-  )
-}
-
-function normalizeSpec(raw) {
-  const spec = JSON.parse(raw)
-  if (!spec.openapi || !spec.paths) throw new Error('Boltz OpenAPI spec did not contain openapi/paths fields')
-  return `${JSON.stringify(spec, null, 2)}\n`
-}
-
-async function main() {
-  const sourceFile = process.env.BOLTZ_OPENAPI_SPEC
-  const sourceUrl = process.env.BOLTZ_OPENAPI_URL
-  const container = process.env.BOLTZ_BACKEND_CONTAINER ?? 'boltz-backend'
-
-  const rawSpec = sourceFile
-    ? readSpecFromFile(sourceFile)
-    : sourceUrl
-      ? await readSpecFromUrl(sourceUrl)
-      : readSpecFromDocker(container)
-
-  mkdirSync(cacheDir, { recursive: true })
-  writeFileSync(tempSpecFile, normalizeSpec(rawSpec))
-
-  const openapiTypescript = resolve(rootDir, 'node_modules/.bin/openapi-typescript')
-  if (!existsSync(openapiTypescript)) throw new Error('openapi-typescript is not installed')
-
-  execFileSync(openapiTypescript, [tempSpecFile, '--output', outputFile], {
-    cwd: rootDir,
-    stdio: 'inherit',
-  })
-  rmSync(tempSpecFile, { force: true })
-}
-
-await main()

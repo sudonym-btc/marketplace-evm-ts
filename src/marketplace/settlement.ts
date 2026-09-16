@@ -1,6 +1,6 @@
 import { decodeEventLog } from 'viem'
 import type { LocalAccount } from 'viem'
-import { multiEscrowAbi } from '@sudonym-btc/marketplace-evm-contracts'
+import { multiEscrowAbi, multiEscrowDomain, multiEscrowTypes, multiEscrowFactorScale } from '@sudonym-btc/marketplace-evm-contracts'
 import { resolveMarketplaceDriverPaymentProofParams } from '@sudonym-btc/marketplace-driver-interface'
 
 import type { MarketplaceEvmClient } from '../client.js'
@@ -16,13 +16,7 @@ import type {
   ResolvedEvmMarketplaceChainConfig,
 } from './types.js'
 
-const arbitrateTypes = {
-  Arbitrate: [
-    { name: 'tradeId', type: 'bytes32' },
-    { name: 'paymentFactor', type: 'uint256' },
-    { name: 'bondFactor', type: 'uint256' },
-  ],
-} as const
+const arbitrateTypes = { Arbitrate: multiEscrowTypes.Arbitrate } as const
 
 const settlementSubmissionKey = 'settlementSubmission'
 const failedSettlementError = 'Unable to settle EVM escrow'
@@ -353,7 +347,7 @@ function settlementRecordBinding(options: {
   if (action !== 'release' && action !== 'refund') {
     throw new Error(`EVM settlement operation ${record.id} has an invalid action`)
   }
-  const factor = action === 'release' ? 1000n : 0n
+  const factor = action === 'release' ? BigInt(multiEscrowFactorScale) : 0n
   const binding = receiptBindingFromParams(
     resolved.params,
     resolved.contractAddress,
@@ -614,8 +608,8 @@ export async function replayCompletedEvmMarketplacePayment(options: {
       operationId: record.id,
       action: completed.action,
       settlementTxHash: completed.txHash,
-      paymentFactor: completed.action === 'release' ? '1000' : '0',
-      bondFactor: completed.action === 'release' ? '1000' : '0',
+      paymentFactor: completed.action === 'release' ? String(multiEscrowFactorScale) : '0',
+      bondFactor: completed.action === 'release' ? String(multiEscrowFactorScale) : '0',
       replayed: true,
     },
   }
@@ -720,7 +714,7 @@ export async function* settleEvmMarketplacePayment(options: {
     throw new Error('EVM settlement account is not the escrow arbiter')
   }
   const tradeId = tradeIdParam(params)
-  const paymentFactor = intent.action === 'release' ? 1000n : 0n
+  const paymentFactor = intent.action === 'release' ? BigInt(multiEscrowFactorScale) : 0n
   const bondFactor = paymentFactor
   const binding = receiptBindingFromParams(params, contractAddress, tradeId, paymentFactor, bondFactor)
   const operationId = canonicalSettlementOperationId(chainId, tradeId)
@@ -787,8 +781,7 @@ export async function* settleEvmMarketplacePayment(options: {
     } else {
       const signature = await options.settlementAccount.signTypedData({
         domain: {
-          name: 'Nostr MultiEscrow',
-          version: '7',
+          ...multiEscrowDomain,
           chainId,
           verifyingContract: contractAddress,
         },
